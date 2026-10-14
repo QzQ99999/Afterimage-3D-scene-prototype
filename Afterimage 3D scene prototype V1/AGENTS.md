@@ -9,7 +9,31 @@ The user froze this version as **Afterimage 3D scene prototype V1** on 2026-10-1
 - The original `Afterimage 3D scene prototype.html` is also frozen and must not be modified without the user's explicit confirmation.
 - Keep this policy in force until the user explicitly approves a change.
 
-## Current authorized zoom stability and boundary revision — 2026-10-14
+## Reconfirmed frozen publication snapshot — 2026-10-14
+
+The user explicitly requested saving and freezing the current version locally, prohibiting updates or changes to the source without their confirmation, and uploading this exact version to the existing GitHub repository and GitHub Pages. This authorization covers publishing the existing bytes only. Do not make source changes, silently update this frozen version, or publish a future revision without the user's explicit authorization for that action.
+
+The frozen HTML SHA256 is `37f949f4210a5aa9194822c147845921e8b2c6576cdf140a3adcc65eae43535e` (85,325 bytes), including the red controllable sphere, follow camera and Sun Disc Size slider. The local source remains read-only and matches `SHA256SUMS.txt`. A byte-identical local snapshot, instructions and manifest are preserved in `backups/frozen-current-20261014-223938/`. The publication copies are the V1 HTML path and `docs/index.html`; preserve the original frozen V0 root HTML files.
+
+## Current authorized sun disc size revision — 2026-10-14
+
+The user explicitly requested a slider in the Sun group controlling the visible sun disc size. The Sun group now includes Disc Size (`sun-disc-size`), range 10–500%, step 1%, default 100% (the original disc profile), numeric output and individual Reset. The existing Reset All and collapsible group behavior include this new slider, bringing the total to 18 sliders.
+
+The slider uses the previously reserved lightColor.w uniform component to scale only the visible disc profile. Existing sun direction, halo, illumination, shadow softness, fog, sphere movement, camera and all other controls remain unchanged. The 80-float uniform layout and six render passes are retained. JavaScript syntax and all five WGSL modules/six pipeline entries passed compilation; the new control was verified in the browser accessibility tree.
+
+The preceding HTML, instructions and checksum are backed up under `backups/before-sun-disc-size-20261014-222943-764/`. Current HTML SHA256: `37f949f4210a5aa9194822c147845921e8b2c6576cdf140a3adcc65eae43535e`. The manifest matches and the HTML is read-only. This local change has not been uploaded to GitHub. The freeze remains in force for future changes.
+
+## Previous authorized player sphere revision — 2026-10-14
+
+The user explicitly requested a red sphere in front of the cube face indicated by the screenshot, at a distance of four cube edges, with a diameter of one quarter of the cube edge, WASD movement, and a sphere-centered follow camera retaining free orbit/zoom and the original initial viewing angles.
+
+The indicated face is +Z. Cube edge remains 1.82, sphere radius is 0.2275, and the ground-resting initial center is [0, 0.2275, 8.19], measuring four edges from the +Z face to the sphere center. Initial camera yaw 0.70, pitch 0.29, radius 10.8 and FOV remain unchanged; its pivot and eye follow the sphere. WASD uses camera-relative horizontal motion at 2.73 world units/second, equal diagonal speed, cube collision/sliding, and clears held keys on blur/tab hiding. Existing drag, touch orbit/pinch, wheel and arrow-key controls remain. The camera lifts over the cube if its orbit would enter the geometry.
+
+The sphere participates in primary rays, cube reflections, sunlight/fog visibility and fog-scaled contact shadows. Motion-aware sphere reprojection and local lighting-history rejection avoid stale sphere/shadow/reflection history; stopping restarts the existing stationary 96-sample coverage accumulation. All 17 sliders, five groups, boundary control, six render passes and previous defaults are preserved. A short WASD/drag/scroll hint is shown.
+
+The prior HTML, instructions and checksum are backed up in `backups/before-player-ball-20261014-215907-555/`. Current HTML SHA256 is `becde5b8d1880371587ac16dbc88e943e25aa3b2cc8813397b4c2b222640fd34`. The checksum manifest matches and the HTML is read-only. Native GPU shader/render checks, JS movement/camera/collision/scheduling and slider regressions, and browser WASD/orbit/zoom checks passed. Reports are in `verification/20261014-player/`. This revision is local; the previously published GitHub snapshot was not changed. All freeze rules remain in force for further changes.
+
+## Previous authorized zoom stability and boundary revision — 2026-10-14
 
 After reverting the previous broad fog stability repair, the user explicitly requested a targeted fix for image shimmer around the cube when zoomed out, plus a slider in Environment controlling the ground/sky boundary distance from the cube. The existing boundary must remain both the default and nearest position.
 

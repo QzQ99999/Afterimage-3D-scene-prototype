@@ -13,6 +13,7 @@
   body { overscroll-behavior:none; }
   canvas { display:block; width:100%; height:100%; touch-action:none; cursor:grab; outline:none; }
   canvas:active { cursor:grabbing; }
+  #navigation-hint { position:fixed; z-index:2; top:calc(max(20px,env(safe-area-inset-top)) + 24px); left:max(22px,env(safe-area-inset-left)); color:#eee9df; font:12px/1.4 system-ui,sans-serif; text-shadow:0 1px 3px #24211c99; pointer-events:none; user-select:none; }
   #fps { position:fixed; z-index:2; top:max(20px,env(safe-area-inset-top)); left:max(22px,env(safe-area-inset-left)); color:#eee9df; font:12px/1.4 ui-monospace,SFMono-Regular,Consolas,monospace; font-variant-numeric:tabular-nums; text-shadow:0 1px 3px #24211c99; pointer-events:none; user-select:none; }
   .controls { position:fixed; z-index:2; left:50%; bottom:max(18px, env(safe-area-inset-bottom)); transform:translateX(-50%); width:min(1440px, calc(100% - 36px)); max-height:calc(100dvh - 92px); overflow-y:auto; overscroll-behavior:contain; scrollbar-width:thin; scrollbar-color:#eee9df66 transparent; display:grid; grid-template-columns:64px repeat(5,minmax(0,1fr)) 102px; gap:12px; align-items:start; padding:4px 3px; --slider-height:28px; }
   .control-group { min-width:0; border:1px solid #eee9df42; border-radius:9px; background:#3d352b20; color:#eee9df; box-shadow:0 2px 12px #28231c08; }
@@ -54,7 +55,8 @@
 </style>
 </head>
 <body>
-<canvas id="scene" tabindex="0" aria-label="沙雾中的金属方块。拖动旋转，滚轮缩放，双指缩放。方向键旋转，加减键缩放。"></canvas>
+<canvas id="scene" tabindex="0" aria-label="沙雾中的金属方块和红色小球。W、A、S、D 移动小球，视角跟随小球。拖动旋转，滚轮缩放，双指缩放。方向键旋转，加减键缩放。"></canvas>
+<div id="navigation-hint">W A S D · Move　Drag · Orbit　Scroll · Zoom</div>
 <output id="fps" aria-label="实际渲染帧率">— FPS</output>
 <div class="controls" role="group" aria-label="Scene Controls">
   <button id="sun-disc-toggle" class="reset-button sun-disc-toggle" type="button" aria-label="Hide Sun Disc" aria-pressed="true" aria-controls="scene" title="Hide Sun Disc">Sun Disc</button>
@@ -78,6 +80,12 @@
         <output id="sun-z-value" for="sun-z" aria-hidden="true">-52.7</output>
         <button class="reset-button" type="button" data-reset="sun-z" aria-label="Reset Sun Z Position">Reset</button>
         <input id="sun-z" type="range" min="-100" max="100" step="0.1" value="-52.7" aria-label="Sun Z Position" data-unit="">
+      </div>
+      <div class="control">
+        <label for="sun-disc-size">Disc Size</label>
+        <output id="sun-disc-size-value" for="sun-disc-size" aria-hidden="true">100.0%</output>
+        <button class="reset-button" type="button" data-reset="sun-disc-size" aria-label="Reset Sun Disc Size">Reset</button>
+        <input id="sun-disc-size" type="range" min="10" max="500" step="1" value="100" aria-label="Sun Disc Size" data-unit="%" title="Visible sun disc size. 100% is the original size.">
       </div>
     </div>
   </details>
@@ -212,6 +220,14 @@ const clamp = (v,a,b) => Math.max(a,Math.min(b,v));
 const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const orbit = { yaw:0.70, pitch:0.29, radius:10.8 };
 const target = {...orbit};
+const CUBE_HALF = 0.91;
+const CUBE_EDGE = CUBE_HALF*2;
+const BALL_RADIUS = CUBE_EDGE/8; // Diameter is one quarter of the cube edge.
+const BALL_SPEED = CUBE_EDGE*1.5;
+// The arrow identifies the +Z face; measure four cube edges from that face.
+const ball = {x:0, y:BALL_RADIUS, z:CUBE_HALF+4*CUBE_EDGE};
+const movementKeys = new Set();
+const movementCodes = new Set(['KeyW','KeyA','KeyS','KeyD']);
 const pointers = new Map();
 let pinchDistance = 0, device, context, format, uniformBuffer, tracePipeline, temporalPipeline, displayPipeline;
 let postUniformBuffer, postLayout, fxaaPipeline, easuPipeline, rcasPipeline;
@@ -223,14 +239,14 @@ let outputWidth = 0, outputHeight = 0, resolutionEpoch = 0;
 let resizeNeeded = true, dirty = true, initialized = false, historyValid = false, generation = 0;
 let noiseTexture, noiseSampler, lastRenderTime = 0, cameraMotion = 0;
 let lastInteractionTime = -Infinity;
-const uniforms = new Float32Array(72);
-const previousUniforms = new Float32Array(72);
+const uniforms = new Float32Array(80);
+const previousUniforms = new Float32Array(80);
 const postUniforms = new Float32Array(12);
 const quality = {targetFps:60, minScale:0.5, maxScale:1, scale:0.7, averageMs:0, warmup:8, slow:0, fast:0, lastChange:0, changes:0, awaitingAdjustment:false};
 const gpuTimer = {enabled:false, slots:[]};
 const diagnostics = {backend:'WebGPU', ready:false, frames:0, samples:0, error:null, resolution:[0,0], outputResolution:[0,0], renderScale:1, targetFps:quality.targetFps, milliseconds:0, gpuMilliseconds:0, budgetMilliseconds:0, timingSource:'queue-latency', fps:0, resolutionChanges:0, passes:['Trace','Temporal','Denoise / Tone Map','FXAA 3.11','FSR 1.0 EASU','FSR 1.0 RCAS'], adapterAttempts:[]};
 // A read-only diagnostics handle for testing; it adds no interface elements.
-Object.defineProperty(window,'sceneDiagnostics',{get:()=>({...diagnostics, camera:{...orbit}, controls:inputs.map(i=>Number(i.value)), controlValues:Object.fromEntries(inputs.map(i=>[i.id,Number(i.value)])), sunDiscVisible})});
+Object.defineProperty(window,'sceneDiagnostics',{get:()=>({...diagnostics, camera:{...orbit,focus:{...ball}}, ball:{...ball,radius:BALL_RADIUS}, movementKeys:[...movementKeys], controls:inputs.map(i=>Number(i.value)), controlValues:Object.fromEntries(inputs.map(i=>[i.id,Number(i.value)])), sunDiscVisible})});
 
 const shader = /* wgsl */`
 struct Uniforms {
@@ -248,10 +264,12 @@ struct Uniforms {
   jitter: vec4f,       // current pixel offset xy, previous pixel offset zw
   fogColor: vec4f,     // luminance-normalized atmospheric tint, reserved
   fogSettings: vec4f,  // fog saturation, fog brightness, shaft size, gap coverage
-  lightColor: vec4f,   // direct sunlight RGB
+  lightColor: vec4f,   // direct sunlight RGB, W visible sun disc size
   skyHorizon: vec4f, // RGB sky tint, W ground boundary distance
   skyZenith: vec4f,
   shaftSettings: vec4f, // directional scattering opacity, reserved yzw
+  ball: vec4f,         // sphere center xyz and radius
+  previousBall: vec4f,
 }
 @group(0) @binding(0) var<uniform> u: Uniforms;
 @group(0) @binding(1) var noiseLattice: texture_2d<f32>;
@@ -307,6 +325,21 @@ fn cubeVisibility(p: vec3f, light: vec3f) -> f32 {
   let h=bounds(p,light,HALF-0.008);
   return select(1.0,0.0,h.y>max(h.x,0.002));
 }
+fn sphereHit(ro:vec3f,rd:vec3f) -> f32 {
+  let offset=ro-u.ball.xyz;
+  let b=dot(offset,rd);
+  let c=dot(offset,offset)-u.ball.w*u.ball.w;
+  let discriminant=b*b-c;
+  if discriminant<0.0 { return FAR; }
+  let root=sqrt(discriminant);
+  let near=-b-root;
+  if near>0.0001 { return near; }
+  let far=-b+root;
+  return select(FAR,far,far>0.0001);
+}
+fn sphereVisibility(p:vec3f,light:vec3f) -> f32 {
+  return select(1.0,0.0,sphereHit(p,light)<FAR);
+}
 struct Hit { t:f32, material:u32 }
 fn intersect(ro:vec3f,rd:vec3f) -> Hit {
   var hit=Hit(FAR,0u);
@@ -316,6 +349,8 @@ fn intersect(ro:vec3f,rd:vec3f) -> Hit {
   }
   let box=cubeHit(ro,rd);
   if box<FAR && box<hit.t { hit=Hit(box,2u); }
+  let sphere=sphereHit(ro,rd);
+  if sphere<FAR && sphere<hit.t { hit=Hit(sphere,3u); }
   return hit;
 }
 fn cloudLight(p:vec3f, light:vec3f) -> f32 {
@@ -338,7 +373,10 @@ fn environment(rd:vec3f,showDisk:f32) -> vec3f {
   let mu=max(dot(rd,u.sun.xyz),0.0);
   let halo=pow(mu,16.0)*0.32+pow(mu,180.0)*0.65;
   // Visibility affects the disc only; lighting, shadows and halo stay intact.
-  let disk=smoothstep(0.99945,0.99982,mu)*8.0*showDisk*u.atmosphere.w;
+  // Scale only the visible disc profile; 100% preserves the original edge.
+  let discScale=max(u.lightColor.w,0.1);
+  let discMu=1.0-(1.0-mu)/(discScale*discScale);
+  let disk=smoothstep(0.99945,0.99982,discMu)*8.0*showDisk*u.atmosphere.w;
   return sky*(0.22+u.sun.w*0.13)+u.lightColor.xyz*(halo+disk)*u.sun.w;
 }
 fn sunSample() -> vec3f {
@@ -381,13 +419,26 @@ fn sandRadiance(p:vec3f,rd:vec3f,t:f32,light:vec3f,showDisk:f32) -> vec3f {
   let grain=(noise(p.xz*170.0)-0.5)*(1.0-smoothstep(0.003,0.015,pixelFootprint));
   let albedo=mix(vec3f(0.29,0.23,0.16),vec3f(0.52,0.42,0.29),mottling)+grain*0.12;
   let footprint=length(max(abs(p.xz)-vec2f(0.83),vec2f(0)));
-  let ao=1.0-0.55*shadowStrength()*exp(-footprint*3.7);
-  let diffuse=max(dot(n,light),0.0)*fogShadow(cubeVisibility(p+vec3f(0,0.003,0),light));
+  let sphereContact=length(p.xz-u.ball.xz)/max(u.ball.w,0.001);
+  let sphereAO=1.0-0.42*shadowStrength()*exp(-sphereContact*sphereContact*1.6);
+  let ao=(1.0-0.55*shadowStrength()*exp(-footprint*3.7))*sphereAO;
+  let diffuse=max(dot(n,light),0.0)*fogShadow(cubeVisibility(p+vec3f(0,0.003,0),light)*sphereVisibility(p+vec3f(0,0.003,0),light));
   let ambient=vec3f(0.32,0.35,0.38)*(0.14+u.sun.w*0.075)*ao;
   let h=normalize(light-rd);
   let sparkle=pow(max(dot(n,h),0.0),90.0)*0.055;
   let sand=albedo*(ambient+u.lightColor.xyz*u.sun.w*diffuse*0.42)+u.lightColor.xyz*sparkle*u.sun.w*diffuse;
   return mix(sand,background,edgeFade);
+}
+fn ballRadiance(p:vec3f,rd:vec3f,light:vec3f) -> vec3f {
+  let n=normalize(p-u.ball.xyz);
+  let albedo=vec3f(0.72,0.012,0.018);
+  let visibility=fogShadow(cubeVisibility(p+n*0.001,light));
+  let diffuse=max(dot(n,light),0.0)*visibility;
+  let groundOcclusion=mix(1.0,mix(0.48,1.0,smoothstep(-0.85,0.45,n.y)),0.15+0.85*shadowStrength());
+  let ambient=vec3f(0.34,0.37,0.40)*(0.24+u.sun.w*0.095)*groundOcclusion;
+  let h=normalize(light-rd);
+  let specular=pow(max(dot(n,h),0.0),60.0)*0.075*visibility;
+  return albedo*(ambient+u.lightColor.xyz*u.sun.w*diffuse*0.60)+u.lightColor.xyz*u.sun.w*specular;
 }
 fn hg(mu:f32,g:f32) -> f32 {
   return (1.0-g*g)/(4.0*PI*pow(max(1.0+g*g-2.0*g*mu,0.001),1.5));
@@ -413,7 +464,7 @@ fn volume(ro:vec3f,rd:vec3f,end:f32,steps:u32,jitter:f32) -> vec4f {
     let p=ro+rd*t;
     let extinction=density(p);
     let attenuation=exp(-extinction*stepLength);
-    let visibility=fogShadow(cubeVisibility(p,u.sun.xyz))*cloudLight(p,u.sun.xyz);
+    let visibility=fogShadow(cubeVisibility(p,u.sun.xyz)*sphereVisibility(p,u.sun.xyz))*cloudLight(p,u.sun.xyz);
     let sunTransmission=exp(-sunCoefficient*max(9.0-p.y,0.0));
     let colored=(ambient+sunLight*visibility*sunTransmission)*u.fogColor.xyz;
     let luma=dot(colored,vec3f(0.2126,0.7152,0.0722));
@@ -460,6 +511,8 @@ fn radiance(ro:vec3f,rd:vec3f) -> TraceOutput {
     var incoming=environment(reflected,0.0);
     if secondary.material==1u {
       incoming=sandRadiance(offset+reflected*secondary.t,reflected,secondary.t,sun,0.0);
+    } else if secondary.material==3u {
+      incoming=ballRadiance(offset+reflected*secondary.t,reflected,sun);
     }
     let reflectedFog=volume(offset,reflected,secondary.t,8u,random());
     incoming=incoming*reflectedFog.w+reflectedFog.xyz;
@@ -474,8 +527,12 @@ fn radiance(ro:vec3f,rd:vec3f) -> TraceOutput {
     let geometryV=nv/(nv*(1.0-0.08)+0.08);
     let geometryL=nl/(nl*(1.0-0.08)+0.08);
     let specular=distribution*geometryV*geometryL/(4.0*nv+0.001);
-    surface=incoming*fresnel + u.lightColor.xyz*fresnel*min(specular,12.0)*u.sun.w*0.55;
+    surface=incoming*fresnel + u.lightColor.xyz*fresnel*min(specular,12.0)*u.sun.w*fogShadow(sphereVisibility(offset,sun))*0.55;
     surface*=0.99+0.10*(noise(vec2f(p.x+p.z,p.y)*vec2f(5.0,900.0))-0.5)*fineDetail;
+  } else if hit.material==3u {
+    let p=ro+rd*hit.t;
+    normal=normalize(p-u.ball.xyz);
+    surface=ballRadiance(p,rd,sun);
   }
   let fog=volume(ro,rd,hit.t,28u,random());
   return TraceOutput(vec4f(surface*fog.w+fog.xyz,1),vec4f(normal,depth));
@@ -509,10 +566,12 @@ struct Uniforms {
   jitter: vec4f,
   fogColor: vec4f,
   fogSettings: vec4f,
-  lightColor: vec4f,
+  lightColor: vec4f,   // RGB direct sunlight, W visible sun disc size
   skyHorizon: vec4f, // RGB sky tint, W ground boundary distance
   skyZenith: vec4f,
   shaftSettings: vec4f,
+  ball: vec4f,
+  previousBall: vec4f,
 }
 @group(0) @binding(0) var<uniform> u: Uniforms;
 @group(0) @binding(1) var currentRadiance: texture_2d<f32>;
@@ -538,10 +597,12 @@ fn compatibleGeometry(a: vec4f, b: vec4f, expectedDepth: f32) -> bool {
   let geometry = textureLoad(currentGeometry, pixel, 0);
   if u.atmosphere.y < 0.5 { return vec4f(current, 1.0); }
 
+  let ballDelta=u.ball.xyz-u.previousBall.xyz;
+  let ballMoving=dot(ballDelta,ballDelta)>1e-10;
   // At rest a pixel integrates subpixel coverage, including samples that hit
   // different materials on a cube silhouette. Rejecting those samples by
   // their latest jittered normal/depth makes small edges repeatedly sparkle.
-  if u.atmosphere.z < 0.00001 {
+  if u.atmosphere.z < 0.00001 && !ballMoving {
     let prior=textureLoad(previousHistory,pixel,0);
     let samples=min(max(prior.a,1.0)+1.0,96.0);
     return vec4f(mix(prior.rgb,current,1.0/samples),samples);
@@ -555,6 +616,23 @@ fn compatibleGeometry(a: vec4f, b: vec4f, expectedDepth: f32) -> bool {
   if geometry.w >= 0.0 {
     let world = u.eye.xyz + ray * geometry.w / max(dot(ray, u.forward.xyz), 0.00001);
     previousVector = world - u.previousEye.xyz;
+    let offset=world-u.ball.xyz;
+    let sphereSurface=abs(length(offset)-u.ball.w)<max(0.012,geometry.w*0.001)
+      && dot(normalize(offset),geometry.xyz)>0.94;
+    if sphereSurface { previousVector-=ballDelta; }
+    // Moving sphere reflections/contact/shadows cannot reuse a static surface's
+    // lighting history. Keep reprojection elsewhere and restart these regions.
+    if ballMoving && !sphereSurface {
+      let onCube=all(abs(world-vec3f(0,0.91,0))<vec3f(0.94));
+      let sunHeight=max(u.sun.y,0.04);
+      let shadow=u.ball.xz-u.sun.xz*u.ball.y/sunHeight;
+      let previousShadow=u.previousBall.xz-u.sun.xz*u.previousBall.y/sunHeight;
+      let shadowReach=u.ball.w/sunHeight*2.0+0.3;
+      let affectedGround=abs(world.y)<0.03 &&
+        (min(length(world.xz-shadow),length(world.xz-previousShadow))<shadowReach
+        || min(length(world.xz-u.ball.xz),length(world.xz-u.previousBall.xz))<u.ball.w*3.0);
+      if onCube || affectedGround { return vec4f(current,1.0); }
+    }
   }
   let projectedDepth = dot(previousVector, u.previousForward.xyz);
   if projectedDepth <= 0.00001 { return vec4f(current, 1.0); }
@@ -639,10 +717,12 @@ struct Uniforms {
   jitter: vec4f,
   fogColor: vec4f,
   fogSettings: vec4f,
-  lightColor: vec4f,
+  lightColor: vec4f,   // RGB direct sunlight, W visible sun disc size
   skyHorizon: vec4f, // RGB sky tint, W ground boundary distance
   skyZenith: vec4f,
   shaftSettings: vec4f,
+  ball: vec4f,
+  previousBall: vec4f,
 }
 @group(0) @binding(0) var<uniform> u: Uniforms;
 @group(0) @binding(1) var resolvedHistory: texture_2d<f32>;
@@ -1035,6 +1115,53 @@ sunDiscToggle.addEventListener('click',()=>{
   sunDiscToggle.title=sunDiscVisible?'Hide Sun Disc':'Show Sun Disc';
   invalidate(true);
 });
+function updateBall(dt) {
+  const forward=Number(movementKeys.has('KeyW'))-Number(movementKeys.has('KeyS'));
+  const strafe=Number(movementKeys.has('KeyD'))-Number(movementKeys.has('KeyA'));
+  const length=Math.hypot(forward,strafe);
+  if(length===0)return 0;
+  // Movement follows the current camera's horizontal axes; diagonals have the
+  // same speed as a single key. Small steps and axis separation allow sliding.
+  const s=Math.sin(orbit.yaw),c=Math.cos(orbit.yaw);
+  const distance=BALL_SPEED*dt/length;
+  const dx=(c*strafe-s*forward)*distance;
+  const dz=(-s*strafe-c*forward)*distance;
+  const startX=ball.x,startZ=ball.z;
+  const steps=Math.max(1,Math.ceil(BALL_SPEED*dt/(BALL_RADIUS*0.5)));
+  const boundary=CUBE_HALF+BALL_RADIUS+0.002;
+  for(let i=0;i<steps;i++) {
+    let nextX=ball.x+dx/steps;
+    if(Math.abs(ball.z)<boundary&&Math.abs(nextX)<boundary) {
+      nextX=ball.x>=boundary?boundary:ball.x<=-boundary?-boundary:ball.x;
+    }
+    ball.x=nextX;
+    let nextZ=ball.z+dz/steps;
+    if(Math.abs(ball.x)<boundary&&Math.abs(nextZ)<boundary) {
+      nextZ=ball.z>=boundary?boundary:ball.z<=-boundary?-boundary:ball.z;
+    }
+    ball.z=nextZ;
+  }
+  return Math.hypot(ball.x-startX,ball.z-startZ);
+}
+function clearMovement() {
+  if(movementKeys.size){movementKeys.clear();invalidate();}
+}
+window.addEventListener('keydown',e=>{
+  if(!movementCodes.has(e.code)||e.isComposing||e.ctrlKey||e.altKey||e.metaKey)return;
+  const element=e.target;
+  if(element?.isContentEditable||element?.closest?.('[contenteditable="true"],textarea,select')||
+    (element?.tagName==='INPUT'&&element.type!=='range'))return;
+  e.preventDefault();
+  if(movementKeys.has(e.code))return;
+  if(movementKeys.size===0)lastRenderTime=performance.now();
+  movementKeys.add(e.code);
+  invalidate();
+});
+window.addEventListener('keyup',e=>{
+  // Always release a key, even when focus or modifier state has changed.
+  if(movementKeys.delete(e.code)){e.preventDefault();invalidate();}
+});
+window.addEventListener('blur',clearMovement);
 canvas.addEventListener('pointerdown',e=>{
   canvas.focus({preventScroll:true});
   canvas.setPointerCapture(e.pointerId);
@@ -1078,7 +1205,7 @@ canvas.addEventListener('keydown',e=>{
   if(handled){e.preventDefault();invalidate();}
 });
 new ResizeObserver(()=>{resizeNeeded=true;invalidate(true);}).observe(canvas);
-document.addEventListener('visibilitychange',()=>{if(!document.hidden)invalidate(true);});
+document.addEventListener('visibilitychange',()=>{if(document.hidden)clearMovement();else {lastRenderTime=performance.now();invalidate(true);}});
 
 // FPS measures completed scene frames, never requestAnimationFrame callbacks.
 // Once the static image converges the GPU sleeps and the counter says idle.
@@ -1173,7 +1300,7 @@ function updateResolutionBudget(milliseconds,epoch,source) {
   if(source==='gpu-timestamp')diagnostics.gpuMilliseconds=milliseconds;
   // Freeze the sampling grid after manipulation; asynchronous GPU timings
   // must not keep clearing a stationary silhouette's accumulated coverage.
-  const interactive=cameraMotion>0.00001||pointers.size>0||performance.now()-lastInteractionTime<180;
+  const interactive=cameraMotion>0.00001||movementKeys.size>0||pointers.size>0||performance.now()-lastInteractionTime<180;
   if(!interactive) {
     quality.awaitingAdjustment=false;quality.slow=0;quality.fast=0;
     return;
@@ -1259,12 +1386,22 @@ function gradeColor(rgb,hueOffset,saturation,brightness) {
 }
 function setUniforms() {
   const s=Math.sin(orbit.yaw),c=Math.cos(orbit.yaw),sp=Math.sin(orbit.pitch),cp=Math.cos(orbit.pitch);
-  const focusY=0.88;
+  const eyeX=ball.x+s*cp*orbit.radius,eyeZ=ball.z+c*cp*orbit.radius;
+  let eyeY=ball.y+sp*orbit.radius;
+  // A following camera can orbit through the cube after the ball moves.
+  // Lift smoothly over its footprint instead of placing the eye inside it.
+  const apron=clamp(Math.max(Math.abs(eyeX)-CUBE_HALF,Math.abs(eyeZ)-CUBE_HALF)/0.6,0,1);
+  const lift=1-apron*apron*(3-2*apron);
+  eyeY+=Math.max(0,CUBE_HALF*2+0.18-eyeY)*lift;
+  const cameraDistance=Math.hypot(cp*orbit.radius,eyeY-ball.y);
+  const cameraSin=(eyeY-ball.y)/cameraDistance,cameraCos=cp*orbit.radius/cameraDistance;
   uniforms.set([renderWidth,renderHeight,frame,totalFrames],0);
-  uniforms.set([s*cp*orbit.radius,focusY+sp*orbit.radius,c*cp*orbit.radius,Math.tan(39*Math.PI/360)],4);
-  uniforms.set([-s*cp,-sp,-c*cp,0],8);
+  // Preserve the original yaw, pitch, distance and FOV; only the orbit pivot
+  // follows the ball. Dragging and zooming continue to operate around that pivot.
+  uniforms.set([eyeX,eyeY,eyeZ,Math.tan(39*Math.PI/360)],4);
+  uniforms.set([-s*cameraCos,-cameraSin,-c*cameraCos,0],8);
   uniforms.set([c,0,-s,0],12);
-  uniforms.set([-s*sp,cp,-c*sp,0],16);
+  uniforms.set([-s*cameraSin,cameraCos,-c*cameraSin,0],16);
   let sun=['sun-x','sun-y','sun-z'].map(id=>Number(controls[id].value));
   let sunLength=Math.hypot(...sun);
   if(sunLength<1e-6) { sun=[58.8,61.4,-52.7]; sunLength=Math.hypot(...sun); }
@@ -1278,11 +1415,13 @@ function setUniforms() {
   uniforms.set([halton(sequence,2)-0.5,halton(sequence,3)-0.5,previousUniforms[44],previousUniforms[45]],44);
   uniforms.set([...fogTint(Number(controls['fog-hue'].value)),0],48);
   uniforms.set([Number(controls['fog-saturation'].value)/100,Number(controls['fog-brightness'].value)/100,Number(controls['shaft-size'].value)/100,Number(controls['shaft-density'].value)/100],52);
-  uniforms.set([...gradeColor([1,0.84,0.62],Number(controls['light-hue'].value)-34.7,Number(controls['light-saturation'].value)/100,1),0],56);
+  uniforms.set([...gradeColor([1,0.84,0.62],Number(controls['light-hue'].value)-34.7,Number(controls['light-saturation'].value)/100,1),Number(controls['sun-disc-size'].value)/100],56);
   const skyHue=Number(controls['environment-hue'].value),skySaturation=Number(controls['environment-saturation'].value)/100,skyBrightness=Number(controls['environment-brightness'].value)/100;
   uniforms.set([...gradeColor(fogTint(35).map(v=>v*0.56),skyHue,skySaturation,skyBrightness),Number(controls['environment-boundary'].value)],60);
   uniforms.set([...gradeColor([0.11,0.16,0.21],skyHue,skySaturation,skyBrightness),0],64);
   uniforms.set([Number(controls['shaft-opacity'].value)/100,0,0,0],68);
+  uniforms.set([ball.x,ball.y,ball.z,BALL_RADIUS],72);
+  uniforms.set(previousUniforms.subarray(72,76),76);
   device.queue.writeBuffer(uniformBuffer,0,uniforms);
 }
 function render(now) {
@@ -1308,6 +1447,8 @@ function render(now) {
       }
       else orbit[key]=target[key];
     }
+    const ballDistance=updateBall(dt);
+    if(ballDistance>0){moving=true;cameraMotion+=ballDistance*8;lastInteractionTime=now;}
     cameraMotion=Math.min(cameraMotion,1);
     // Start a clean stationary coverage integral, without retaining the final
     // moving frame's reprojected silhouette or reflection history.
@@ -1341,7 +1482,7 @@ function render(now) {
     previousUniforms.set(uniforms);
     historyValid=true;dirty=false;
     frame++;totalFrames++;pendingFrames++;
-    const submittedSamples=frame,submittedCamera=JSON.stringify(orbit),submittedMotion=cameraMotion;
+    const submittedSamples=frame,submittedCamera=JSON.stringify({...orbit,focus:{...ball}}),submittedMotion=cameraMotion;
     device.queue.onSubmittedWorkDone().then(()=>{
       pendingFrames--;
       if(token!==generation||stopped)return;
@@ -1359,7 +1500,7 @@ function render(now) {
       canvas.dataset.renderScale=diagnostics.renderScale.toFixed(4);
       canvas.dataset.resolutionChanges=String(quality.changes);
     }).catch(fail);
-    if(frame<96||moving)scheduleRender();
+    if(frame<96||moving||movementKeys.size>0)scheduleRender();
   } catch(error) {fail(error);}
 }
 async function requestSceneDevice(gpu) {
