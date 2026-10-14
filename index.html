@@ -1,0 +1,776 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#b1a99a">
+<title>沙雾 · A quiet volume</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  html, body { width:100%; height:100%; margin:0; overflow:hidden; background:#b1a99a; }
+  body { overscroll-behavior:none; }
+  canvas { display:block; width:100%; height:100%; touch-action:none; cursor:grab; outline:none; }
+  canvas:active { cursor:grabbing; }
+  #fps { position:fixed; z-index:2; top:max(20px,env(safe-area-inset-top)); left:max(22px,env(safe-area-inset-left)); color:#eee9df; font:12px/1.4 ui-monospace,SFMono-Regular,Consolas,monospace; font-variant-numeric:tabular-nums; text-shadow:0 1px 3px #24211c99; pointer-events:none; user-select:none; }
+  .controls { position:fixed; z-index:2; left:50%; bottom:max(38px, env(safe-area-inset-bottom)); transform:translateX(-50%); display:flex; gap:34px; align-items:center; }
+  .control { display:grid; justify-items:center; gap:2px; }
+  .control output { color:#eee9df; font:12px/1.4 system-ui,sans-serif; font-variant-numeric:tabular-nums; text-shadow:0 1px 3px #24211c99; pointer-events:none; user-select:none; }
+  input[type=range] { -webkit-appearance:none; appearance:none; width:126px; height:32px; margin:0; padding:0; border:0; outline:none; background:transparent; cursor:ew-resize; touch-action:none; --fill:50%; }
+  input[type=range]::-webkit-slider-runnable-track { height:2px; border-radius:2px; background:linear-gradient(to right, rgba(54,48,38,.68) 0 var(--fill), rgba(64,55,42,.22) var(--fill) 100%); }
+  input[type=range]::-moz-range-track { height:2px; border-radius:2px; background:rgba(64,55,42,.22); }
+  input[type=range]::-moz-range-progress { height:2px; background:rgba(54,48,38,.68); }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:10px; height:10px; margin-top:-4px; border-radius:50%; background:#efebe1; border:1px solid rgba(56,48,37,.48); box-shadow:0 1px 5px #332a2420; transition:box-shadow .2s, transform .2s; }
+  input[type=range]::-moz-range-thumb { width:9px; height:9px; border-radius:50%; background:#efebe1; border:1px solid rgba(56,48,37,.48); }
+  input[type=range]:hover::-webkit-slider-thumb { transform:scale(1.2); }
+  input[type=range]:focus-visible::-webkit-slider-thumb { box-shadow:0 0 0 5px #f3ede660; }
+  #error { position:fixed; inset:0; display:none; place-items:center; padding:32px; color:#39382f; font:14px/1.8 system-ui,sans-serif; text-align:center; white-space:pre-line; }
+  @media(max-width:520px) { .controls { gap:25px; bottom:max(24px, env(safe-area-inset-bottom)); } input[type=range] { width:78px; height:44px; } }
+  @media(prefers-reduced-motion:reduce) { input[type=range]::-webkit-slider-thumb { transition:none; } }
+</style>
+</head>
+<body>
+<canvas id="scene" tabindex="0" aria-label="沙雾中的金属方块。拖动旋转，滚轮缩放，双指缩放。方向键旋转，加减键缩放。"></canvas>
+<output id="fps" aria-label="实际渲染帧率">— FPS</output>
+<div class="controls" role="group" aria-label="场景调节">
+  <div class="control">
+    <output id="sun-value" for="sun" aria-hidden="true">65.0%</output>
+    <input id="sun" type="range" min="0" max="100" step="0.1" value="65" aria-label="太阳位置">
+  </div>
+  <div class="control">
+    <output id="light-value" for="light" aria-hidden="true">48.0%</output>
+    <input id="light" type="range" min="0" max="100" step="0.1" value="48" aria-label="光线强度">
+  </div>
+  <div class="control">
+    <output id="fog-value" for="fog" aria-hidden="true">46.0%</output>
+    <input id="fog" type="range" min="0" max="100" step="0.1" value="46" aria-label="雾的浓度">
+  </div>
+</div>
+<div id="error" role="alert"></div>
+<script type="module">
+/*
+ * A self-contained WebGPU ray tracer. No CDN, models, images or runtime dependencies.
+ * Actual secondary rays reflect the procedural ground / atmospheric environment.
+ * Beer–Lambert extinction + Henyey–Greenstein single scattering, cube shadow rays,
+ * and a world-space high cloud layer produce the light shafts (not a 2D overlay).
+ * Fixed resolution, cached noise, reprojected HDR history, edge-aware denoising.
+ * Open in a WebGPU browser using localhost / HTTPS (file:// works in Chromium too).
+ */
+const canvas = document.querySelector('#scene');
+const inputs = [...document.querySelectorAll('input')];
+const errorBox = document.querySelector('#error');
+const fpsOutput = document.querySelector('#fps');
+const clamp = (v,a,b) => Math.max(a,Math.min(b,v));
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const orbit = { yaw:0.70, pitch:0.29, radius:10.8 };
+const target = {...orbit};
+const pointers = new Map();
+let pinchDistance = 0, device, context, format, uniformBuffer, tracePipeline, temporalPipeline, displayPipeline;
+let history = [], geometry = [], rawRadiance, traceGroup, temporalGroups = [], displayGroups = [];
+let frame = 0, totalFrames = 0, completedFrames = 0, pendingFrames = 0;
+let renderWidth = 0, renderHeight = 0, scheduled = false, stopped = false;
+let resizeNeeded = true, dirty = true, initialized = false, historyValid = false, generation = 0;
+let noiseTexture, noiseSampler, lastRenderTime = 0, cameraMotion = 0;
+const uniforms = new Float32Array(48);
+const previousUniforms = new Float32Array(48);
+const diagnostics = {backend:'WebGPU', ready:false, frames:0, samples:0, error:null, resolution:[0,0], milliseconds:0, fps:0, adapterAttempts:[]};
+// A read-only diagnostics handle for testing; it adds no interface elements.
+Object.defineProperty(window,'sceneDiagnostics',{get:()=>({...diagnostics, camera:{...orbit}, controls:inputs.map(i=>Number(i.value))})});
+
+const shader = /* wgsl */`
+struct Uniforms {
+  screen: vec4f,       // width, height, accumulated samples, random sequence
+  eye: vec4f,
+  forward: vec4f,
+  right: vec4f,
+  up: vec4f,
+  sun: vec4f,          // direction, radiance
+  atmosphere: vec4f,   // extinction, valid history, camera motion, reserved
+  previousEye: vec4f,
+  previousForward: vec4f,
+  previousRight: vec4f,
+  previousUp: vec4f,
+  jitter: vec4f,       // current pixel offset xy, previous pixel offset zw
+}
+@group(0) @binding(0) var<uniform> u: Uniforms;
+@group(0) @binding(1) var noiseLattice: texture_2d<f32>;
+@group(0) @binding(2) var noiseSampler: sampler;
+const PI = 3.14159265359;
+const FAR = 1000000.0;
+const CENTER = vec3f(0.0, 0.91, 0.0);
+const HALF = vec3f(0.91);
+const BEVEL = 0.048;
+const SUN_COLOR = vec3f(1.0, 0.84, 0.62);
+var<private> rng: u32;
+
+fn random() -> f32 {
+  rng = rng * 747796405u + 2891336453u;
+  let word = ((rng >> ((rng >> 28u) + 4u)) ^ rng) * 277803737u;
+  return f32((word >> 22u) ^ word) / 4294967296.0;
+}
+fn noise(p: vec2f) -> f32 {
+  let i = floor(p); let f = fract(p); let s = f*f*(3.0-2.0*f);
+  return textureSampleLevel(noiseLattice,noiseSampler,(i+s+128.5)/256.0,0.0).r;
+}
+fn fbm(p: vec2f) -> f32 {
+  return 0.57*noise(p) + 0.28*noise(p*2.03+11.7) + 0.15*noise(p*4.11-8.4);
+}
+fn boxSDF(p: vec3f) -> f32 {
+  let q = abs(p-CENTER) - (HALF-BEVEL);
+  return length(max(q,vec3f(0))) + min(max(q.x,max(q.y,q.z)),0.0) - BEVEL;
+}
+fn bounds(ro: vec3f, rd: vec3f, halfSize: vec3f) -> vec2f {
+  // sign(0) is zero; explicitly protect exactly parallel rays.
+  let safe = select(vec3f(-1e-7),vec3f(1e-7),rd>=vec3f(0));
+  let inv = 1.0 / select(rd,safe,abs(rd)<vec3f(1e-7));
+  let a = (CENTER-halfSize-ro)*inv; let b = (CENTER+halfSize-ro)*inv;
+  let lo = min(a,b); let hi = max(a,b);
+  return vec2f(max(lo.x,max(lo.y,lo.z)),min(hi.x,min(hi.y,hi.z)));
+}
+fn cubeHit(ro: vec3f, rd: vec3f) -> f32 {
+  let slab = bounds(ro,rd,HALF);
+  if slab.y < max(slab.x,0.001) { return FAR; }
+  var t = max(slab.x,0.001);
+  for(var i=0;i<24;i++) {
+    let d = boxSDF(ro+rd*t);
+    if d<0.00015 { return t; }
+    t += max(d,0.0001);
+    if t>slab.y+0.001 { break; }
+  }
+  return FAR;
+}
+fn cubeNormal(p: vec3f) -> vec3f {
+  let d=p-CENTER; let q=abs(d)-(HALF-BEVEL);
+  return normalize(sign(d)*max(q,vec3f(0.00001)));
+}
+fn cubeVisibility(p: vec3f, light: vec3f) -> f32 {
+  let h=bounds(p,light,HALF-0.008);
+  return select(1.0,0.0,h.y>max(h.x,0.002));
+}
+struct Hit { t:f32, material:u32 }
+fn intersect(ro:vec3f,rd:vec3f) -> Hit {
+  var hit=Hit(FAR,0u);
+  if rd.y < -0.00001 {
+    let t=-ro.y/rd.y;
+    if t>0.0001 { hit=Hit(t,1u); }
+  }
+  let box=cubeHit(ro,rd);
+  if box<FAR && box<hit.t { hit=Hit(box,2u); }
+  return hit;
+}
+fn cloudLight(p:vec3f, light:vec3f) -> f32 {
+  // Trace the sun ray to a high, broken cloud sheet. Its transmission is
+  // constant along each sun ray, giving coherent shafts in world space.
+  let height=max(14.0-p.y,0.0)/max(light.y,0.07);
+  let q=(p.xz+light.xz*height)*0.17+vec2f(4.1,1.8);
+  let cloud=0.68*noise(q*vec2f(2.4,0.65))+0.32*noise(q*3.7+8.0);
+  return 0.08+0.92*smoothstep(0.43,0.66,cloud);
+}
+fn environment(rd:vec3f,showDisk:f32) -> vec3f {
+  let horizon=vec3f(0.60,0.57,0.50);
+  let zenith=vec3f(0.11,0.16,0.21);
+  let sky=mix(horizon,zenith,pow(max(rd.y,0.0),0.48));
+  let mu=max(dot(rd,u.sun.xyz),0.0);
+  let halo=pow(mu,16.0)*0.32+pow(mu,180.0)*0.65;
+  let disk=smoothstep(0.99945,0.99982,mu)*8.0*showDisk;
+  return sky*(0.22+u.sun.w*0.13)+SUN_COLOR*(halo+disk)*u.sun.w;
+}
+fn sunSample() -> vec3f {
+  let a=random()*2.0*PI; let r=sqrt(random())*0.012;
+  let tangent=normalize(cross(u.sun.xyz,vec3f(0,1,0)));
+  let bitangent=cross(tangent,u.sun.xyz);
+  return normalize(u.sun.xyz+r*(cos(a)*tangent+sin(a)*bitangent));
+}
+fn sandNormal(p:vec3f,t:f32) -> vec3f {
+  // Analytic ripple slopes replace four expensive finite-difference terrain calls.
+  let q=p.xz;
+  let phase=dot(q,vec2f(0.61,0.37));
+  let warp=sin(phase)*0.55+noise(q*0.42)*2.7;
+  let warpGradient=cos(phase)*0.55*vec2f(0.61,0.37);
+  let footprint=max(t*2.0*u.eye.w/u.screen.y,0.0001);
+  let detail=1.0-smoothstep(0.07,0.24,footprint);
+  let gradient=cos(q.y*12.0+q.x*3.1+warp)*0.016*(vec2f(3.1,12.0)+warpGradient)
+    +cos(q.y*23.7+q.x*5.9+warp*1.8)*0.003*(vec2f(5.9,23.7)+warpGradient*1.8)*detail;
+  let fade=1.0-smoothstep(12.0,48.0,t);
+  return normalize(vec3f(-gradient.x*fade,1.0,-gradient.y*fade));
+}
+fn sandRadiance(p:vec3f,rd:vec3f,t:f32,light:vec3f) -> vec3f {
+  let n=sandNormal(p,t);
+  let mottling=fbm(p.xz*0.75);
+  let pixelFootprint=max(t*2.0*u.eye.w/u.screen.y,0.0001);
+  let grain=(noise(p.xz*170.0)-0.5)*(1.0-smoothstep(0.003,0.015,pixelFootprint));
+  let albedo=mix(vec3f(0.29,0.23,0.16),vec3f(0.52,0.42,0.29),mottling)+grain*0.12;
+  let footprint=length(max(abs(p.xz)-vec2f(0.83),vec2f(0)));
+  let ao=1.0-0.55*exp(-footprint*3.7);
+  let diffuse=max(dot(n,light),0.0)*cubeVisibility(p+vec3f(0,0.003,0),light)*cloudLight(p,light);
+  let ambient=vec3f(0.32,0.35,0.38)*(0.14+u.sun.w*0.075)*ao;
+  let h=normalize(light-rd);
+  let sparkle=pow(max(dot(n,h),0.0),90.0)*0.055;
+  return albedo*(ambient+SUN_COLOR*u.sun.w*diffuse*0.42)+SUN_COLOR*sparkle*u.sun.w*diffuse;
+}
+fn hg(mu:f32,g:f32) -> f32 {
+  return (1.0-g*g)/(4.0*PI*pow(max(1.0+g*g-2.0*g*mu,0.001),1.5));
+}
+fn density(p:vec3f) -> f32 {
+  let layers=exp(-max(p.y,0.0)*0.11);
+  let wisps=noise(p.xz*0.24+vec2f(p.y*0.14,-p.y*0.10));
+  let clearing=0.60+0.40*smoothstep(1.8,6.5,length(p-CENTER));
+  return u.atmosphere.x*layers*(0.60+0.60*wisps)*clearing;
+}
+// RGB: in-scattered radiance, A: transmittance to the surface.
+fn volume(ro:vec3f,rd:vec3f,end:f32,steps:u32,jitter:f32) -> vec4f {
+  if u.atmosphere.x<0.00001 {return vec4f(0,0,0,1);}
+  let reach=min(end,70.0);
+  let stepLength=reach/f32(steps);
+  let phase=hg(dot(rd,u.sun.xyz),0.46);
+  let ambient=vec3f(0.33,0.37,0.42)*(0.16+u.sun.w*0.065);
+  let sunCoefficient=u.atmosphere.x*0.28/max(u.sun.y,0.15);
+  let sunLight=SUN_COLOR*(u.sun.w*phase*5.0);
+  var transmission=1.0; var light=vec3f(0);
+  for(var i=0u;i<steps;i++) {
+    let t=(f32(i)+jitter)*stepLength;
+    let p=ro+rd*t;
+    let extinction=density(p);
+    let attenuation=exp(-extinction*stepLength);
+    let visibility=cubeVisibility(p,u.sun.xyz)*cloudLight(p,u.sun.xyz);
+    let sunTransmission=exp(-sunCoefficient*max(9.0-p.y,0.0));
+    let scattered=ambient+sunLight*visibility*sunTransmission;
+    light+=transmission*(1.0-attenuation)*scattered*0.94;
+    transmission*=attenuation;
+    if transmission<0.008 { break; }
+  }
+  return vec4f(light,transmission);
+}
+fn reflectionDirection(rd:vec3f,n:vec3f,roughness:f32) -> vec3f {
+  let a=2.0*PI*random();
+  let r=roughness*sqrt(-log(max(0.0001,1.0-random())));
+  let tangent=normalize(cross(n,select(vec3f(0,1,0),vec3f(1,0,0),abs(n.y)>0.95)));
+  let micro=normalize(n+r*(cos(a)*tangent+sin(a)*cross(n,tangent)));
+  let reflected=reflect(rd,micro);
+  return select(reflect(rd,n),reflected,dot(reflected,n)>0.0);
+}
+struct TraceOutput {
+  @location(0) color: vec4f,
+  @location(1) geometry: vec4f,
+}
+fn radiance(ro:vec3f,rd:vec3f) -> TraceOutput {
+  let hit=intersect(ro,rd); let sun=sunSample();
+  var normal=rd;
+  var depth=-1.0;
+  var surface=environment(rd,1.0);
+  if hit.material!=0u {depth=min(hit.t*dot(rd,u.forward.xyz),60000.0);}
+  if hit.material==1u {
+    normal=vec3f(0,1,0);
+    surface=sandRadiance(ro+rd*hit.t,rd,hit.t,sun);
+  } else if hit.material==2u {
+    let p=ro+rd*hit.t;
+    var n=cubeNormal(p);
+    normal=n;
+    // Fine brushed alloy, small enough to preserve the broad metallic reflection.
+    let footprint=max(hit.t*2.0*u.eye.w/u.screen.y,0.0001);
+    let fineDetail=1.0-smoothstep(0.0006,0.0035,footprint);
+    let brush=(noise(vec2f(p.x+p.z,p.y)*vec2f(26.0,620.0))-0.5)*fineDetail;
+    n=normalize(n+vec3f(brush*0.004,brush*0.012,brush*0.004));
+    let reflected=reflectionDirection(rd,n,0.045);
+    let offset=p+n*0.003;
+    let secondary=intersect(offset,reflected);
+    var incoming=environment(reflected,0.0);
+    if secondary.material==1u {
+      incoming=sandRadiance(offset+reflected*secondary.t,reflected,secondary.t,sun);
+    }
+    let reflectedFog=volume(offset,reflected,secondary.t,8u,random());
+    incoming=incoming*reflectedFog.w+reflectedFog.xyz;
+    let f0=vec3f(0.72,0.76,0.80);
+    let fresnel=f0+(vec3f(1)-f0)*pow(1.0-clamp(dot(n,-rd),0.0,1.0),5.0);
+    // Direct area-sun GGX term complements sampled secondary environment rays.
+    let h=normalize(sun-rd); let nh=max(dot(n,h),0.0);
+    let nl=max(dot(n,sun),0.0); let nv=max(dot(n,-rd),0.001);
+    let alpha=0.075; let a2=alpha*alpha;
+    let denom=nh*nh*(a2-1.0)+1.0;
+    let distribution=a2/(PI*denom*denom);
+    let geometryV=nv/(nv*(1.0-0.08)+0.08);
+    let geometryL=nl/(nl*(1.0-0.08)+0.08);
+    let specular=distribution*geometryV*geometryL/(4.0*nv+0.001);
+    surface=incoming*fresnel + SUN_COLOR*fresnel*min(specular,12.0)*u.sun.w*cloudLight(p,sun)*0.55;
+    surface*=0.99+0.10*(noise(vec2f(p.x+p.z,p.y)*vec2f(5.0,900.0))-0.5)*fineDetail;
+  }
+  let fog=volume(ro,rd,hit.t,28u,random());
+  return TraceOutput(vec4f(surface*fog.w+fog.xyz,1),vec4f(normal,depth));
+}
+@vertex fn vs(@builtin(vertex_index) index:u32) -> @builtin(position) vec4f {
+  let xy=vec2f(f32((index<<1u)&2u),f32(index&2u));
+  return vec4f(xy*2.0-1.0,0.0,1.0);
+}
+@fragment fn fs(@builtin(position) frag:vec4f) -> TraceOutput {
+  let pixel=vec2u(frag.xy);
+  rng=(pixel.x*1973u+pixel.y*9277u+u32(u.screen.w)*26699u)|1u;
+  let xy=(2.0*(frag.xy+u.jitter.xy)-u.screen.xy)/u.screen.y;
+  let ray=normalize(u.forward.xyz+u.right.xyz*xy.x*u.eye.w-u.up.xyz*xy.y*u.eye.w);
+  return radiance(u.eye.xyz,ray);
+}
+`;
+
+const temporalShader = /* wgsl */`
+struct Uniforms {
+  screen: vec4f,
+  eye: vec4f,
+  forward: vec4f,
+  right: vec4f,
+  up: vec4f,
+  sun: vec4f,
+  atmosphere: vec4f,
+  previousEye: vec4f,
+  previousForward: vec4f,
+  previousRight: vec4f,
+  previousUp: vec4f,
+  jitter: vec4f,
+}
+@group(0) @binding(0) var<uniform> u: Uniforms;
+@group(0) @binding(1) var currentRadiance: texture_2d<f32>;
+@group(0) @binding(2) var currentGeometry: texture_2d<f32>;
+@group(0) @binding(3) var previousHistory: texture_2d<f32>;
+@group(0) @binding(4) var previousGeometry: texture_2d<f32>;
+
+@vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
+  return vec4f(vec2f(f32((i << 1u) & 2u), f32(i & 2u)) * 2.0 - 1.0, 0.0, 1.0);
+}
+
+fn compatibleGeometry(a: vec4f, b: vec4f, expectedDepth: f32) -> bool {
+  if a.w < 0.0 { return b.w < 0.0; }
+  if b.w < 0.0 || dot(a.xyz, b.xyz) < 0.94 { return false; }
+  return abs(b.w - expectedDepth) <= max(0.035, abs(expectedDepth) * 0.012);
+}
+
+@fragment fn fs(@builtin(position) frag: vec4f) -> @location(0) vec4f {
+  let pixel = vec2i(frag.xy);
+  let dimensions = vec2i(textureDimensions(currentRadiance));
+  let upper = dimensions - vec2i(1);
+  let current = textureLoad(currentRadiance, pixel, 0).rgb;
+  let geometry = textureLoad(currentGeometry, pixel, 0);
+  if u.atmosphere.y < 0.5 { return vec4f(current, 1.0); }
+
+  // The G-buffer stores forward depth, not ray length. Include both frames'
+  // subpixel offsets so static accumulation remains registered to the surface.
+  let xy = (2.0 * (frag.xy + u.jitter.xy) - u.screen.xy) / u.screen.y;
+  let ray = normalize(u.forward.xyz + u.right.xyz * xy.x * u.eye.w - u.up.xyz * xy.y * u.eye.w);
+  var previousVector = ray;
+  if geometry.w >= 0.0 {
+    let world = u.eye.xyz + ray * geometry.w / max(dot(ray, u.forward.xyz), 0.00001);
+    previousVector = world - u.previousEye.xyz;
+  }
+  let projectedDepth = dot(previousVector, u.previousForward.xyz);
+  if projectedDepth <= 0.00001 { return vec4f(current, 1.0); }
+  let previousXY = vec2f(dot(previousVector, u.previousRight.xyz), -dot(previousVector, u.previousUp.xyz))
+    / (projectedDepth * max(u.previousEye.w, 0.00001));
+  var previousPixel = (previousXY * u.screen.y + u.screen.xy) * 0.5 - u.jitter.zw;
+  // At rest, accumulate different subpixel samples of this same pixel directly.
+  // Repeated bilinear reprojection of a stationary image would soften detail.
+  if u.atmosphere.z < 0.00001 { previousPixel = frag.xy; }
+  if any(previousPixel < vec2f(0.5)) || any(previousPixel > u.screen.xy - vec2f(0.5)) {
+    return vec4f(current, 1.0);
+  }
+
+  // Validate each bilinear contributor independently. Unchecked filtered
+  // sampling would mix the floor into a newly exposed cube silhouette.
+  let samplePosition = previousPixel - vec2f(0.5);
+  let base = vec2i(floor(samplePosition));
+  let fraction = fract(samplePosition);
+  var old = vec4f(0.0);
+  var validWeight = 0.0;
+  for (var y = 0; y < 2; y++) {
+    for (var x = 0; x < 2; x++) {
+      let coord = clamp(base + vec2i(x, y), vec2i(0), upper);
+      let priorGeometry = textureLoad(previousGeometry, coord, 0);
+      if !compatibleGeometry(geometry, priorGeometry, projectedDepth) { continue; }
+      let wx = select(1.0 - fraction.x, fraction.x, x == 1);
+      let wy = select(1.0 - fraction.y, fraction.y, y == 1);
+      let weight = wx * wy;
+      old += textureLoad(previousHistory, coord, 0) * weight;
+      validWeight += weight;
+    }
+  }
+  if validWeight < 0.12 { return vec4f(current, 1.0); }
+  old /= validWeight;
+
+  // Clamp reprojected light to the current surface's neighborhood. This limits
+  // trailing in the view-dependent fog and metallic reflections after a turn.
+  var minimum = current;
+  var maximum = current;
+  var sum = vec3f(0.0);
+  var squareSum = vec3f(0.0);
+  var count = 0.0;
+  for (var y = -1; y <= 1; y++) {
+    for (var x = -1; x <= 1; x++) {
+      let coord = clamp(pixel + vec2i(x, y), vec2i(0), upper);
+      let neighborGeometry = textureLoad(currentGeometry, coord, 0);
+      if !compatibleGeometry(geometry, neighborGeometry, geometry.w) { continue; }
+      let sampleColor = textureLoad(currentRadiance, coord, 0).rgb;
+      minimum = min(minimum, sampleColor);
+      maximum = max(maximum, sampleColor);
+      sum += sampleColor;
+      squareSum += sampleColor * sampleColor;
+      count += 1.0;
+    }
+  }
+  count = max(count, 1.0);
+  let mean = sum / count;
+  let deviation = sqrt(max(squareSum / count - mean * mean, vec3f(0.0)));
+  let allowance = vec3f(0.004) + abs(mean) * 0.015;
+  let low = max(minimum - allowance, mean - deviation * 1.75 - allowance);
+  let high = min(maximum + allowance, mean + deviation * 1.75 + allowance);
+  let historyColor = clamp(old.rgb, low, high);
+  let motion = clamp(u.atmosphere.z, 0.0, 1.0);
+  let limit = select(64.0, mix(8.0, 6.0, motion), motion > 0.00001);
+  let samples = min(max(old.a, 1.0) + 1.0, limit);
+  // Rejecting a subset of taps lowers confidence at disocclusions.
+  let historyWeight = (1.0 - 1.0 / samples) * min(validWeight * 1.15, 1.0);
+  return vec4f(mix(current, historyColor, historyWeight), samples);
+}
+`;
+
+const displayShader = /* wgsl */`
+struct Uniforms {
+  screen: vec4f,
+  eye: vec4f,
+  forward: vec4f,
+  right: vec4f,
+  up: vec4f,
+  sun: vec4f,
+  atmosphere: vec4f,
+  previousEye: vec4f,
+  previousForward: vec4f,
+  previousRight: vec4f,
+  previousUp: vec4f,
+  jitter: vec4f,
+}
+@group(0) @binding(0) var<uniform> u: Uniforms;
+@group(0) @binding(1) var resolvedHistory: texture_2d<f32>;
+@group(0) @binding(2) var currentGeometry: texture_2d<f32>;
+@group(0) @binding(3) var linearSampler: sampler;
+
+@vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
+  return vec4f(vec2f(f32((i << 1u) & 2u), f32(i & 2u)) * 2.0 - 1.0, 0.0, 1.0);
+}
+fn luminance(c: vec3f) -> f32 { return dot(c, vec3f(0.2126, 0.7152, 0.0722)); }
+fn aces(x: vec3f) -> vec3f {
+  return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), vec3f(0.0), vec3f(1.0));
+}
+
+@fragment fn fs(@builtin(position) p: vec4f) -> @location(0) vec4f {
+  let size = vec2i(textureDimensions(resolvedHistory));
+  let pixel = clamp(vec2i(p.xy), vec2i(0), size - vec2i(1));
+  let center = textureLoad(resolvedHistory, pixel, 0);
+  let geometry = textureLoad(currentGeometry, pixel, 0);
+  let historyLength = max(center.a, 1.0);
+  let centerLuma = luminance(center.rgb);
+  let colorWidth = 0.045 + abs(centerLuma) * 0.32 + 0.06 / sqrt(historyLength);
+  var filtered = vec3f(0.0);
+  var weights = 0.0;
+  for (var y = -1; y <= 1; y++) {
+    for (var x = -1; x <= 1; x++) {
+      let coord = clamp(pixel + vec2i(x, y), vec2i(0), size - vec2i(1));
+      let g = textureLoad(currentGeometry, coord, 0);
+      if (geometry.w < 0.0) != (g.w < 0.0) { continue; }
+      var geometryWeight = 1.0;
+      if geometry.w >= 0.0 {
+        let normalAgreement = max(dot(geometry.xyz, g.xyz), 0.0);
+        if normalAgreement < 0.94 { continue; }
+        let depthWidth = max(0.04, abs(geometry.w) * 0.018);
+        let depthDifference = abs(g.w - geometry.w) / depthWidth;
+        if depthDifference > 2.0 { continue; }
+        geometryWeight = pow(normalAgreement, 24.0) * exp(-depthDifference * depthDifference);
+      }
+      let sampleColor = textureLoad(resolvedHistory, coord, 0).rgb;
+      let colorDifference = (luminance(sampleColor) - centerLuma) / colorWidth;
+      let spatialWeight = select(1.0, 2.0, x == 0) * select(1.0, 2.0, y == 0);
+      let weight = spatialWeight * geometryWeight * exp(-colorDifference * colorDifference * 0.5);
+      filtered += sampleColor * weight;
+      weights += weight;
+    }
+  }
+  // Newly revealed pixels get a stronger spatial cleanup. Converged surfaces
+  // keep their brushed-metal and sand detail instead of retaining a blur.
+  let strength = clamp(0.95 / sqrt(historyLength), 0.06, 0.88);
+  var c = mix(center.rgb, filtered / max(weights, 0.00001), strength);
+  let uv = p.xy / u.screen.xy;
+  let bloomStep = vec2f(12.0) / u.screen.xy;
+  let bloom0 = textureSampleLevel(resolvedHistory, linearSampler, uv + vec2f(bloomStep.x, 0.0), 0.0).rgb;
+  let bloom1 = textureSampleLevel(resolvedHistory, linearSampler, uv - vec2f(bloomStep.x, 0.0), 0.0).rgb;
+  let bloom2 = textureSampleLevel(resolvedHistory, linearSampler, uv + vec2f(0.0, bloomStep.y), 0.0).rgb;
+  let bloom3 = textureSampleLevel(resolvedHistory, linearSampler, uv - vec2f(0.0, bloomStep.y), 0.0).rgb;
+  let bloom = max(bloom0 - vec3f(0.75), vec3f(0.0)) + max(bloom1 - vec3f(0.75), vec3f(0.0))
+    + max(bloom2 - vec3f(0.75), vec3f(0.0)) + max(bloom3 - vec3f(0.75), vec3f(0.0));
+  c += bloom * 0.015;
+  let vignette = (uv - vec2f(0.5)) * vec2f(1.0, 0.75);
+  c *= 1.0 - 0.15 * dot(vignette, vignette);
+  c = aces(c * 1.12);
+  return vec4f(pow(c, vec3f(1.0 / 2.2)), 1.0);
+}
+`;
+
+function fail(error) {
+  stopped=true;
+  fpsOutput.textContent='— FPS';
+  diagnostics.error=String(error?.message||error);
+  console.error(error);
+  document.querySelector('.controls').hidden=true;
+  document.querySelector('.controls').style.display='none';
+  errorBox.textContent=String(error?.message||error);
+  errorBox.style.display='grid';
+}
+function scheduleRender() {
+  if(!scheduled&&!stopped&&initialized&&!document.hidden) {scheduled=true;requestAnimationFrame(render);}
+}
+function invalidate(resetHistory=false) {
+  if(resetHistory)dirty=true;
+  frame=0;
+  scheduleRender();
+}
+function updateSlider(input) {
+  const displayValue=`${Number(input.value).toFixed(1)}%`;
+  input.style.setProperty('--fill',`${input.value}%`);
+  document.getElementById(`${input.id}-value`).value=displayValue;
+  input.setAttribute('aria-valuetext',input.id==='sun'?`${displayValue} 太阳轨道`:displayValue);
+}
+for(const input of inputs) {
+  updateSlider(input);
+  input.addEventListener('input',()=>{ updateSlider(input); invalidate(true); });
+}
+canvas.addEventListener('pointerdown',e=>{
+  canvas.focus({preventScroll:true});
+  canvas.setPointerCapture(e.pointerId);
+  pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
+  if(pointers.size===2) { const p=[...pointers.values()]; pinchDistance=Math.hypot(p[1].x-p[0].x,p[1].y-p[0].y); }
+  invalidate();
+});
+canvas.addEventListener('pointermove',e=>{
+  if(!pointers.has(e.pointerId))return;
+  const old=pointers.get(e.pointerId); const dx=e.clientX-old.x,dy=e.clientY-old.y;
+  pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
+  if(pointers.size===1) {
+    target.yaw-=dx*0.006;
+    target.pitch=clamp(target.pitch+dy*0.005,0.065,1.36);
+  } else {
+    const p=[...pointers.values()]; const d=Math.hypot(p[1].x-p[0].x,p[1].y-p[0].y);
+    if(pinchDistance>0&&d>0)target.radius=clamp(target.radius*pinchDistance/d,4.2,23);
+    pinchDistance=d;
+  }
+  invalidate();
+});
+function release(e){pointers.delete(e.pointerId);if(pointers.size<2)pinchDistance=0;invalidate();}
+canvas.addEventListener('pointerup',release);
+canvas.addEventListener('pointercancel',release);
+canvas.addEventListener('lostpointercapture',release);
+canvas.addEventListener('wheel',e=>{
+  e.preventDefault();
+  const delta=e.deltaY*(e.deltaMode===1?16:e.deltaMode===2?innerHeight:1);
+  target.radius=clamp(target.radius*Math.exp(clamp(delta,-240,240)*0.0012),4.2,23);
+  invalidate();
+},{passive:false});
+canvas.addEventListener('keydown',e=>{
+  let handled=true;
+  if(e.key==='ArrowLeft')target.yaw+=0.10;
+  else if(e.key==='ArrowRight')target.yaw-=0.10;
+  else if(e.key==='ArrowUp')target.pitch=clamp(target.pitch+0.08,0.065,1.36);
+  else if(e.key==='ArrowDown')target.pitch=clamp(target.pitch-0.08,0.065,1.36);
+  else if(e.key==='+'||e.key==='=')target.radius=clamp(target.radius*0.9,4.2,23);
+  else if(e.key==='-'||e.key==='_')target.radius=clamp(target.radius/0.9,4.2,23);
+  else handled=false;
+  if(handled){e.preventDefault();invalidate();}
+});
+new ResizeObserver(()=>{resizeNeeded=true;invalidate(true);}).observe(canvas);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)invalidate(true);});
+
+// FPS measures completed scene frames, never requestAnimationFrame callbacks.
+// Once the static image converges the GPU sleeps and the counter says idle.
+const completionTimes=[];
+setInterval(()=>{
+  const now=performance.now();
+  const last=completionTimes.at(-1)||0;
+  const idle=frame>=96&&pendingFrames===0&&now-last>300;
+  const span=last-(completionTimes[0]||last);
+  diagnostics.fps=span>50?(completionTimes.length-1)*1000/span:0;
+  if(stopped||!initialized)fpsOutput.textContent='— FPS';
+  else if(document.hidden)fpsOutput.textContent='0 FPS · 暂停';
+  else if(idle){diagnostics.fps=0;fpsOutput.textContent='0 FPS · 静止';}
+  else fpsOutput.textContent=span>50?`${Math.round(diagnostics.fps)} FPS`:'— FPS';
+  fpsOutput.dataset.fps=diagnostics.fps.toFixed(1);
+},250);
+
+function createNoiseResources() {
+  // Store the value-noise lattice once. Linear sampling replaces hundreds of
+  // repeated arithmetic hashes per ray while preserving smooth cubic weights.
+  const data=new Uint8Array(256*256);
+  const fract=x=>x-Math.floor(x);
+  for(let y=0;y<256;y++)for(let x=0;x<256;x++) {
+    let a=fract((x-128)*0.1031),b=fract((y-128)*0.1031),c=a;
+    const d=a*(b+33.33)+b*(c+33.33)+c*(a+33.33);
+    a+=d;b+=d;c+=d;
+    data[y*256+x]=Math.round(fract((a+b)*c)*255);
+  }
+  noiseTexture=device.createTexture({size:[256,256],format:'r8unorm',usage:GPUTextureUsage.TEXTURE_BINDING|GPUTextureUsage.COPY_DST});
+  device.queue.writeTexture({texture:noiseTexture},data,{bytesPerRow:256},[256,256]);
+  noiseSampler=device.createSampler({minFilter:'linear',magFilter:'linear',addressModeU:'repeat',addressModeV:'repeat'});
+  traceGroup=device.createBindGroup({layout:tracePipeline.getBindGroupLayout(0),entries:[
+    {binding:0,resource:{buffer:uniformBuffer}},{binding:1,resource:noiseTexture.createView()},{binding:2,resource:noiseSampler}
+  ]});
+}
+
+function resize() {
+  // One resolution for both movement and rest. No interaction-time resize,
+  // no lost history and no visible switch from a blurry frame to a sharp one.
+  const dpr=Math.min(devicePixelRatio||1,1.25);
+  const cap=1_000_000;
+  const scale=Math.min(dpr,Math.sqrt(cap/(innerWidth*innerHeight)));
+  const w=Math.max(1,Math.floor(innerWidth*scale)),h=Math.max(1,Math.floor(innerHeight*scale));
+  if(w===renderWidth&&h===renderHeight){resizeNeeded=false;return;}
+  renderWidth=canvas.width=w; renderHeight=canvas.height=h;
+  for(const texture of [...history,...geometry])texture.destroy();
+  rawRadiance?.destroy();
+  const makeTexture=()=>device.createTexture({size:[w,h],format:'rgba16float',usage:GPUTextureUsage.RENDER_ATTACHMENT|GPUTextureUsage.TEXTURE_BINDING});
+  history=[makeTexture(),makeTexture()];
+  geometry=[makeTexture(),makeTexture()];
+  rawRadiance=makeTexture();
+  temporalGroups=history.map((_,i)=>device.createBindGroup({layout:temporalPipeline.getBindGroupLayout(0),entries:[
+    {binding:0,resource:{buffer:uniformBuffer}},{binding:1,resource:rawRadiance.createView()},
+    {binding:2,resource:geometry[i].createView()},{binding:3,resource:history[1-i].createView()},
+    {binding:4,resource:geometry[1-i].createView()}
+  ]}));
+  const sampler=device.createSampler({magFilter:'linear',minFilter:'linear'});
+  displayGroups=history.map((texture,i)=>device.createBindGroup({layout:displayPipeline.getBindGroupLayout(0),entries:[
+    {binding:0,resource:{buffer:uniformBuffer}},{binding:1,resource:texture.createView()},
+    {binding:2,resource:geometry[i].createView()},{binding:3,resource:sampler}
+  ]}));
+  diagnostics.resolution=[w,h];resizeNeeded=false;dirty=true;historyValid=false;frame=0;
+}
+function halton(index,base) {
+  let result=0,fraction=1;
+  while(index>0){fraction/=base;result+=fraction*(index%base);index=Math.floor(index/base);}
+  return result;
+}
+function setUniforms() {
+  const s=Math.sin(orbit.yaw),c=Math.cos(orbit.yaw),sp=Math.sin(orbit.pitch),cp=Math.cos(orbit.pitch);
+  const focusY=0.88;
+  uniforms.set([renderWidth,renderHeight,frame,totalFrames],0);
+  uniforms.set([s*cp*orbit.radius,focusY+sp*orbit.radius,c*cp*orbit.radius,Math.tan(39*Math.PI/360)],4);
+  uniforms.set([-s*cp,-sp,-c*cp,0],8);
+  uniforms.set([c,0,-s,0],12);
+  uniforms.set([-s*sp,cp,-c*sp,0],16);
+  const time=Number(inputs[0].value)/100;
+  const azimuth=-2.8+time*5.6;
+  const elevation=0.10+Math.sin(time*Math.PI)*0.63;
+  const intensity=Number(inputs[1].value)/100;
+  uniforms.set([Math.sin(azimuth)*Math.cos(elevation),Math.sin(elevation),-Math.cos(azimuth)*Math.cos(elevation),intensity*6.0],20);
+  const fog=Number(inputs[2].value)/100;
+  uniforms.set([fog*fog*0.30,historyValid&&!dirty?1:0,cameraMotion,0],24);
+  uniforms.set(previousUniforms.subarray(4,20),28);
+  const sequence=totalFrames%32+1;
+  uniforms.set([halton(sequence,2)-0.5,halton(sequence,3)-0.5,previousUniforms[44],previousUniforms[45]],44);
+  device.queue.writeBuffer(uniformBuffer,0,uniforms);
+}
+function render(now) {
+  scheduled=false;
+  if(stopped||document.hidden)return;
+  // Keep at most two frames queued. Do not wait for GPU completion before
+  // requesting the next animation frame (which can miss a display refresh).
+  if(pendingFrames>=2||(resizeNeeded&&pendingFrames>0)){scheduleRender();return;}
+  const started=performance.now(); const token=generation;
+  try {
+    if(resizeNeeded)resize();
+    const dt=clamp((now-lastRenderTime)/1000,1/240,0.05);
+    lastRenderTime=now;
+    let moving=false;
+    cameraMotion=0;
+    for(const key of ['yaw','pitch','radius']) {
+      const delta=target[key]-orbit[key];
+      if(Math.abs(delta)>0.0001) {
+        const step=delta*(reduceMotion?1:1-Math.exp(-18*dt));
+        orbit[key]+=step;moving=true;
+        cameraMotion+=Math.abs(step)*(key==='radius'?0.08:1.0)*16;
+      }
+      else orbit[key]=target[key];
+    }
+    cameraMotion=Math.min(cameraMotion,1);
+    if(dirty||moving)frame=0;
+    setUniforms();
+    const encoder=device.createCommandEncoder();
+    const destination=totalFrames%2;
+    const attachment=view=>({view,loadOp:'clear',storeOp:'store',clearValue:{r:0,g:0,b:0,a:0}});
+    const trace=encoder.beginRenderPass({colorAttachments:[attachment(rawRadiance.createView()),attachment(geometry[destination].createView())]});
+    trace.setPipeline(tracePipeline);trace.setBindGroup(0,traceGroup);trace.draw(3);trace.end();
+    const temporal=encoder.beginRenderPass({colorAttachments:[attachment(history[destination].createView())]});
+    temporal.setPipeline(temporalPipeline);temporal.setBindGroup(0,temporalGroups[destination]);temporal.draw(3);temporal.end();
+    const display=encoder.beginRenderPass({colorAttachments:[{view:context.getCurrentTexture().createView(),loadOp:'clear',storeOp:'store',clearValue:{r:0,g:0,b:0,a:1}}]});
+    display.setPipeline(displayPipeline);display.setBindGroup(0,displayGroups[destination]);display.draw(3);display.end();
+    device.queue.submit([encoder.finish()]);
+    previousUniforms.set(uniforms);
+    historyValid=true;dirty=false;
+    frame++;totalFrames++;pendingFrames++;
+    const submittedSamples=frame,submittedCamera=JSON.stringify(orbit),submittedMotion=cameraMotion;
+    device.queue.onSubmittedWorkDone().then(()=>{
+      pendingFrames--;
+      if(token!==generation||stopped)return;
+      completedFrames++;
+      const completedAt=performance.now();
+      if(completedAt-(completionTimes.at(-1)||0)>250)completionTimes.length=0;
+      completionTimes.push(completedAt);
+      if(completionTimes.length>60)completionTimes.shift();
+      diagnostics.frames=completedFrames;diagnostics.samples=submittedSamples;diagnostics.milliseconds=performance.now()-started;
+      diagnostics.ready=true;
+      canvas.dataset.ready='true';canvas.dataset.samples=String(submittedSamples);
+      canvas.dataset.frames=String(completedFrames);canvas.dataset.frameMilliseconds=diagnostics.milliseconds.toFixed(1);
+      canvas.dataset.camera=submittedCamera;canvas.dataset.motion=submittedMotion.toFixed(4);
+    }).catch(fail);
+    if(frame<96||moving)scheduleRender();
+  } catch(error) {fail(error);}
+}
+async function requestSceneDevice(gpu) {
+  // Let the browser select its supported adapter first. Explicit preferences
+  // are retries, not a requirement for a discrete/high-performance GPU.
+  for(const preference of ['default','high-performance','low-power']) {
+    const options=preference==='default'?undefined:{powerPreference:preference};
+    const attempt={preference,status:'requesting'};
+    diagnostics.adapterAttempts.push(attempt);
+    try {
+      const adapter=await gpu.requestAdapter(options);
+      if(!adapter){attempt.status='unavailable';continue;}
+      const selectedDevice=await adapter.requestDevice();
+      attempt.status='ready';
+      canvas.dataset.adapter=preference;
+      return selectedDevice;
+    } catch(error) {
+      attempt.status='failed';
+      attempt.message=String(error?.message||error);
+    }
+  }
+  console.warn('WebGPU adapter attempts:',JSON.stringify(diagnostics.adapterAttempts));
+  throw new Error('浏览器未提供可用的 WebGPU 设备。\n请在 Chrome 地址栏打开 chrome://settings/system，\n开启“使用图形加速功能（如果可用）”，重新启动 Chrome 后再打开本页面。\n如果仍然无法显示，请打开 chrome://gpu 查看 WebGPU 的状态。');
+}
+async function init() {
+  if(!navigator.gpu)throw new Error('此场景需要 WebGPU。请使用支持 WebGPU 的 Chrome 或 Edge，并通过 localhost 或 HTTPS 打开。');
+  device=await requestSceneDevice(navigator.gpu);
+  device.addEventListener('uncapturederror',e=>fail(e.error));
+  device.lost.then(info=>{generation++;if(!stopped)fail(new Error(`GPU 连接已中断，请刷新页面。${info.message}`));});
+  context=canvas.getContext('webgpu');
+  format=navigator.gpu.getPreferredCanvasFormat();
+  context.configure({device,format,alphaMode:'opaque'});
+  uniformBuffer=device.createBuffer({size:uniforms.byteLength,usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST});
+  const modules=[shader,temporalShader,displayShader].map(code=>device.createShaderModule({code}));
+  for(const module of modules) {
+    const info=await module.getCompilationInfo();
+    const errors=info.messages.filter(m=>m.type==='error');
+    if(errors.length)throw new Error(errors.map(m=>`WGSL ${m.lineNum}:${m.linePos} ${m.message}`).join('\n'));
+  }
+  [tracePipeline,temporalPipeline,displayPipeline]=await Promise.all(modules.map((module,i)=>device.createRenderPipelineAsync({
+    layout:'auto',vertex:{module,entryPoint:'vs'},
+    fragment:{module,entryPoint:'fs',targets:i===0?[{format:'rgba16float'},{format:'rgba16float'}]:[{format:i===2?format:'rgba16float'}]},
+    primitive:{topology:'triangle-list'}
+  })));
+  createNoiseResources();
+  initialized=true;
+  invalidate();
+}
+init().catch(fail);
+</script>
+</body>
+</html>
