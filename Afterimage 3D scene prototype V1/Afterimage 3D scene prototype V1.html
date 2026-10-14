@@ -6,6 +6,7 @@
 <meta name="theme-color" content="#b1a99a">
 <title>沙雾 · A quiet volume</title>
 <style>
+
   :root { color-scheme: light; }
   * { box-sizing: border-box; }
   html, body { width:100%; height:100%; margin:0; overflow:hidden; background:#b1a99a; }
@@ -13,76 +14,181 @@
   canvas { display:block; width:100%; height:100%; touch-action:none; cursor:grab; outline:none; }
   canvas:active { cursor:grabbing; }
   #fps { position:fixed; z-index:2; top:max(20px,env(safe-area-inset-top)); left:max(22px,env(safe-area-inset-left)); color:#eee9df; font:12px/1.4 ui-monospace,SFMono-Regular,Consolas,monospace; font-variant-numeric:tabular-nums; text-shadow:0 1px 3px #24211c99; pointer-events:none; user-select:none; }
-  .controls { position:fixed; z-index:2; left:50%; bottom:max(38px, env(safe-area-inset-bottom)); transform:translateX(-50%); width:min(1140px, calc(100% - 48px)); display:grid; grid-template-columns:auto repeat(6,minmax(0,1fr)) auto; gap:28px; align-items:start; --slider-height:32px; }
-  .control { display:grid; justify-items:center; gap:2px; min-width:0; }
-  .control output { color:#eee9df; font:12px/1.4 system-ui,sans-serif; font-variant-numeric:tabular-nums; text-shadow:0 1px 3px #24211c99; pointer-events:none; user-select:none; }
-  .control label { color:#eee9df; font:11px/1.4 system-ui,sans-serif; text-align:center; text-shadow:0 1px 3px #24211ccc; user-select:none; }
-  .reset-button { min-height:28px; margin:0 0 4px; padding:4px 10px; border:1px solid #eee9df55; border-radius:5px; background:#302a201f; color:#eee9df; font:10px/1.4 system-ui,sans-serif; text-shadow:0 1px 3px #24211c99; cursor:pointer; touch-action:manipulation; }
+  .controls { position:fixed; z-index:2; left:50%; bottom:max(18px, env(safe-area-inset-bottom)); transform:translateX(-50%); width:min(1440px, calc(100% - 36px)); max-height:calc(100dvh - 92px); overflow-y:auto; overscroll-behavior:contain; scrollbar-width:thin; scrollbar-color:#eee9df66 transparent; display:grid; grid-template-columns:64px repeat(5,minmax(0,1fr)) 102px; gap:12px; align-items:start; padding:4px 3px; --slider-height:28px; }
+  .control-group { min-width:0; border:1px solid #eee9df42; border-radius:9px; background:#3d352b20; color:#eee9df; box-shadow:0 2px 12px #28231c08; }
+  .control-group summary { display:flex; align-items:center; justify-content:space-between; gap:8px; min-height:36px; padding:8px 11px; list-style:none; color:#f3eee5; font:600 11px/1.4 system-ui,sans-serif; letter-spacing:.055em; text-shadow:0 1px 3px #24211c88; cursor:pointer; user-select:none; touch-action:manipulation; }
+  .control-group summary::-webkit-details-marker { display:none; }
+  .control-group summary::after { content:"+"; color:#eee9dfb8; font:400 16px/1 system-ui,sans-serif; }
+  .control-group[open] summary::after { content:"−"; }
+  .control-group summary:focus-visible { outline:2px solid #eee9df; outline-offset:-3px; border-radius:8px; }
+  .group-body { display:grid; gap:10px; padding:3px 11px 11px; }
+  .control { display:grid; grid-template-columns:minmax(0,1fr) auto auto; align-items:center; gap:0 6px; min-width:0; }
+  .control label { color:#eee9df; font:10px/1.45 system-ui,sans-serif; text-shadow:0 1px 3px #24211caa; user-select:none; }
+  .control output { color:#f1ece3; font:10px/1.4 system-ui,sans-serif; font-variant-numeric:tabular-nums; white-space:nowrap; text-shadow:0 1px 3px #24211c99; pointer-events:none; user-select:none; }
+  .reset-button { min-height:28px; margin:0; padding:4px 9px; border:1px solid #eee9df55; border-radius:5px; background:#302a201f; color:#eee9df; font:10px/1.4 system-ui,sans-serif; text-shadow:0 1px 3px #24211c99; cursor:pointer; touch-action:manipulation; }
+  .control .reset-button { min-height:23px; padding:2px 5px; font-size:9px; }
   .reset-button:hover { background:#eee9df26; border-color:#eee9df99; }
   .reset-button:focus-visible { outline:2px solid #eee9df; outline-offset:3px; }
   .reset-button:active { background:#302a2055; }
-  .reset-all { margin-top:calc(16.8px + var(--slider-height) + 4px); justify-self:end; white-space:nowrap; }
-  .sun-disc-toggle { display:grid; justify-items:center; gap:4px; width:56px; margin-top:18.8px; padding:6px; white-space:nowrap; }
+  .panel-actions { display:flex; flex-direction:column; gap:8px; align-items:stretch; min-width:0; }
+  .panel-actions .reset-button { white-space:nowrap; min-height:32px; }
+  .sun-disc-toggle { display:grid; justify-items:center; align-content:center; gap:6px; min-height:56px; width:64px; padding:6px; white-space:nowrap; }
   .sun-disc-toggle::before { content:""; width:8px; height:8px; border:1px solid currentColor; border-radius:50%; }
   .sun-disc-toggle[aria-pressed="true"] { border-color:#eee9df99; background:#eee9df26; }
   .sun-disc-toggle[aria-pressed="true"]::before { background:currentColor; box-shadow:0 0 6px #eee9df66; }
-  input[type=range] { -webkit-appearance:none; appearance:none; width:100%; min-width:0; height:var(--slider-height); margin:0; padding:0; border:0; outline:none; background:transparent; cursor:ew-resize; touch-action:none; --fill:50%; }
-  input[type=range]::-webkit-slider-runnable-track { height:2px; border-radius:2px; background:linear-gradient(to right, rgba(54,48,38,.68) 0 var(--fill), rgba(64,55,42,.22) var(--fill) 100%); }
-  input[type=range]::-moz-range-track { height:2px; border-radius:2px; background:rgba(64,55,42,.22); }
+  input[type=range] { grid-column:1 / -1; -webkit-appearance:none; appearance:none; width:100%; min-width:0; height:var(--slider-height); margin:0; padding:0; border:0; outline:none; background:transparent; cursor:ew-resize; touch-action:none; --fill:50%; }
+  input[type=range]::-webkit-slider-runnable-track { height:2px; border-radius:2px; background:linear-gradient(to right, rgba(54,48,38,.68) 0 var(--fill), rgba(238,233,223,.28) var(--fill) 100%); }
+  input[type=range]::-moz-range-track { height:2px; border-radius:2px; background:rgba(238,233,223,.28); }
   input[type=range]::-moz-range-progress { height:2px; background:rgba(54,48,38,.68); }
   input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:10px; height:10px; margin-top:-4px; border-radius:50%; background:#efebe1; border:1px solid rgba(56,48,37,.48); box-shadow:0 1px 5px #332a2420; transition:box-shadow .2s, transform .2s; }
   input[type=range]::-moz-range-thumb { width:9px; height:9px; border-radius:50%; background:#efebe1; border:1px solid rgba(56,48,37,.48); }
   input[type=range]:hover::-webkit-slider-thumb { transform:scale(1.2); }
   input[type=range]:focus-visible::-webkit-slider-thumb { box-shadow:0 0 0 5px #f3ede660; }
-  #error { position:fixed; inset:0; display:none; place-items:center; padding:32px; color:#39382f; font:14px/1.8 system-ui,sans-serif; text-align:center; white-space:pre-line; }
-  @media(max-width:900px) { .controls { width:min(580px, calc(100% - 40px)); grid-template-columns:auto repeat(3,minmax(0,1fr)); gap:16px 18px; bottom:max(24px, env(safe-area-inset-bottom)); --slider-height:36px; } .sun-disc-toggle { grid-column:1; grid-row:1 / span 2; } .reset-all { grid-column:1 / -1; margin-top:0; } }
-  @media(max-width:380px) { .controls { gap:12px; } .control label { font-size:10px; } }
-  @media(max-height:480px) { .controls { bottom:max(12px, env(safe-area-inset-bottom)); gap:8px 20px; --slider-height:26px; } }
+  input[type=range]:focus-visible::-moz-range-thumb { box-shadow:0 0 0 5px #f3ede660; }
+  @media(max-width:1100px) { .controls { width:min(600px, calc(100% - 32px)); grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; max-height:calc(100dvh - 92px); } .sun-disc-toggle { grid-column:1; grid-row:1; } .panel-actions { grid-column:2; grid-row:1; justify-self:end; width:108px; } .control label,.control output { font-size:11px; } }
+  @media(max-width:520px) { .controls { width:calc(100% - 24px); grid-template-columns:minmax(0,1fr); gap:10px; bottom:max(12px,env(safe-area-inset-bottom)); max-height:calc(100dvh - 92px); --slider-height:32px; } .sun-disc-toggle { grid-column:1; grid-row:1; } .panel-actions { grid-column:1; grid-row:1; } .control-group summary { min-height:38px; } .group-body { gap:8px; } .control .reset-button { min-height:28px; padding:3px 8px; } }
+  @media(max-height:480px) { .controls { bottom:max(8px,env(safe-area-inset-bottom)); max-height:calc(100dvh - 72px); } }
   @media(prefers-reduced-motion:reduce) { input[type=range]::-webkit-slider-thumb { transition:none; } }
+
+  #error { position:fixed; inset:0; display:none; place-items:center; padding:32px; color:#39382f; font:14px/1.8 system-ui,sans-serif; text-align:center; white-space:pre-line; }
 </style>
 </head>
 <body>
 <canvas id="scene" tabindex="0" aria-label="沙雾中的金属方块。拖动旋转，滚轮缩放，双指缩放。方向键旋转，加减键缩放。"></canvas>
 <output id="fps" aria-label="实际渲染帧率">— FPS</output>
-<div class="controls" role="group" aria-label="场景调节">
-  <button id="sun-disc-toggle" class="reset-button sun-disc-toggle" type="button" aria-label="显示日轮" aria-pressed="true" aria-controls="scene" title="Hide Sun Disc">Sun Disc</button>
-  <div class="control">
-    <output id="sun-value" for="sun" aria-hidden="true">65.0%</output>
-    <input id="sun" type="range" min="0" max="100" step="0.1" value="65" aria-label="太阳位置">
-    <button class="reset-button" type="button" data-reset="sun" aria-label="Reset Sun Position">Reset</button>
-    <label for="sun">Sun Position</label>
+<div class="controls" role="group" aria-label="Scene Controls">
+  <button id="sun-disc-toggle" class="reset-button sun-disc-toggle" type="button" aria-label="Hide Sun Disc" aria-pressed="true" aria-controls="scene" title="Hide Sun Disc">Sun Disc</button>
+  <details id="sun-group" class="control-group" open>
+    <summary>Sun</summary>
+    <div class="group-body">
+      <div class="control">
+        <label for="sun-x">X Position</label>
+        <output id="sun-x-value" for="sun-x" aria-hidden="true">58.8</output>
+        <button class="reset-button" type="button" data-reset="sun-x" aria-label="Reset Sun X Position">Reset</button>
+        <input id="sun-x" type="range" min="-100" max="100" step="0.1" value="58.8" aria-label="Sun X Position" data-unit="">
+      </div>
+      <div class="control">
+        <label for="sun-y">Y Position</label>
+        <output id="sun-y-value" for="sun-y" aria-hidden="true">61.4</output>
+        <button class="reset-button" type="button" data-reset="sun-y" aria-label="Reset Sun Y Position">Reset</button>
+        <input id="sun-y" type="range" min="-100" max="100" step="0.1" value="61.4" aria-label="Sun Y Position" data-unit="">
+      </div>
+      <div class="control">
+        <label for="sun-z">Z Position</label>
+        <output id="sun-z-value" for="sun-z" aria-hidden="true">-52.7</output>
+        <button class="reset-button" type="button" data-reset="sun-z" aria-label="Reset Sun Z Position">Reset</button>
+        <input id="sun-z" type="range" min="-100" max="100" step="0.1" value="-52.7" aria-label="Sun Z Position" data-unit="">
+      </div>
+    </div>
+  </details>
+  <details id="fog-group" class="control-group" open>
+    <summary>Fog</summary>
+    <div class="group-body">
+      <div class="control">
+        <label for="fog">Density</label>
+        <output id="fog-value" for="fog" aria-hidden="true">46.0%</output>
+        <button class="reset-button" type="button" data-reset="fog" aria-label="Reset Fog Density">Reset</button>
+        <input id="fog" type="range" min="0" max="100" step="0.1" value="46" aria-label="Fog Density" data-unit="%">
+      </div>
+      <div class="control">
+        <label for="fog-hue">Hue</label>
+        <output id="fog-hue-value" for="fog-hue" aria-hidden="true">35.0°</output>
+        <button class="reset-button" type="button" data-reset="fog-hue" aria-label="Reset Fog Hue">Reset</button>
+        <input id="fog-hue" type="range" min="0" max="360" step="0.1" value="35" aria-label="Fog Hue" data-unit="°">
+      </div>
+      <div class="control">
+        <label for="fog-saturation">Saturation</label>
+        <output id="fog-saturation-value" for="fog-saturation" aria-hidden="true">100.0%</output>
+        <button class="reset-button" type="button" data-reset="fog-saturation" aria-label="Reset Fog Saturation">Reset</button>
+        <input id="fog-saturation" type="range" min="0" max="200" step="0.1" value="100" aria-label="Fog Saturation" data-unit="%">
+      </div>
+      <div class="control">
+        <label for="fog-brightness">Brightness</label>
+        <output id="fog-brightness-value" for="fog-brightness" aria-hidden="true">100.0%</output>
+        <button class="reset-button" type="button" data-reset="fog-brightness" aria-label="Reset Fog Brightness">Reset</button>
+        <input id="fog-brightness" type="range" min="0" max="200" step="0.1" value="100" aria-label="Fog Brightness" data-unit="%">
+      </div>
+    </div>
+  </details>
+  <details id="tyndall-group" class="control-group" open>
+    <summary>Tyndall</summary>
+    <div class="group-body">
+      <div class="control">
+        <label for="shaft-size">Shaft Size</label>
+        <output id="shaft-size-value" for="shaft-size" aria-hidden="true">100.0%</output>
+        <button class="reset-button" type="button" data-reset="shaft-size" aria-label="Reset Tyndall Shaft Size">Reset</button>
+        <input id="shaft-size" type="range" min="20" max="300" step="0.1" value="100" aria-label="Tyndall Shaft Size" data-unit="%">
+      </div>
+      <div class="control">
+        <label for="shaft-density">Shaft Density</label>
+        <output id="shaft-density-value" for="shaft-density" aria-hidden="true">100.0%</output>
+        <button class="reset-button" type="button" data-reset="shaft-density" aria-label="Reset Tyndall Shaft Density">Reset</button>
+        <input id="shaft-density" type="range" min="0" max="200" step="0.1" value="100" aria-label="Tyndall Shaft Density" data-unit="%">
+      </div>
+      <div class="control">
+        <label for="shaft-opacity">Shaft Opacity</label>
+        <output id="shaft-opacity-value" for="shaft-opacity" aria-hidden="true">100.0%</output>
+        <button class="reset-button" type="button" data-reset="shaft-opacity" aria-label="Reset Tyndall Shaft Opacity">Reset</button>
+        <input id="shaft-opacity" type="range" min="0" max="200" step="0.1" value="100" aria-label="Tyndall Shaft Opacity" data-unit="%">
+      </div>
+    </div>
+  </details>
+  <details id="light-group" class="control-group" open>
+    <summary>Light</summary>
+    <div class="group-body">
+      <div class="control">
+        <label for="light-hue">Hue</label>
+        <output id="light-hue-value" for="light-hue" aria-hidden="true">34.7°</output>
+        <button class="reset-button" type="button" data-reset="light-hue" aria-label="Reset Light Hue">Reset</button>
+        <input id="light-hue" type="range" min="0" max="360" step="0.1" value="34.7" aria-label="Light Hue" data-unit="°">
+      </div>
+      <div class="control">
+        <label for="light-brightness">Brightness</label>
+        <output id="light-brightness-value" for="light-brightness" aria-hidden="true">100.0%</output>
+        <button class="reset-button" type="button" data-reset="light-brightness" aria-label="Reset Light Brightness">Reset</button>
+        <input id="light-brightness" type="range" min="0" max="200" step="0.1" value="100" aria-label="Light Brightness" data-unit="%">
+      </div>
+      <div class="control">
+        <label for="light-saturation">Saturation</label>
+        <output id="light-saturation-value" for="light-saturation" aria-hidden="true">100.0%</output>
+        <button class="reset-button" type="button" data-reset="light-saturation" aria-label="Reset Light Saturation">Reset</button>
+        <input id="light-saturation" type="range" min="0" max="200" step="0.1" value="100" aria-label="Light Saturation" data-unit="%">
+      </div>
+    </div>
+  </details>
+  <details id="environment-group" class="control-group" open>
+    <summary>Environment</summary>
+    <div class="group-body">
+      <div class="control">
+        <label for="environment-hue">Hue</label>
+        <output id="environment-hue-value" for="environment-hue" aria-hidden="true">0.0°</output>
+        <button class="reset-button" type="button" data-reset="environment-hue" aria-label="Reset Environment Hue">Reset</button>
+        <input id="environment-hue" type="range" min="-180" max="180" step="0.1" value="0" aria-label="Environment Hue" data-unit="°">
+      </div>
+      <div class="control">
+        <label for="environment-brightness">Brightness</label>
+        <output id="environment-brightness-value" for="environment-brightness" aria-hidden="true">100.0%</output>
+        <button class="reset-button" type="button" data-reset="environment-brightness" aria-label="Reset Environment Brightness">Reset</button>
+        <input id="environment-brightness" type="range" min="0" max="200" step="0.1" value="100" aria-label="Environment Brightness" data-unit="%">
+      </div>
+      <div class="control">
+        <label for="environment-saturation">Saturation</label>
+        <output id="environment-saturation-value" for="environment-saturation" aria-hidden="true">100.0%</output>
+        <button class="reset-button" type="button" data-reset="environment-saturation" aria-label="Reset Environment Saturation">Reset</button>
+        <input id="environment-saturation" type="range" min="0" max="200" step="0.1" value="100" aria-label="Environment Saturation" data-unit="%">
+      </div>
+      <div class="control">
+        <label for="environment-boundary">Boundary Distance</label>
+        <output id="environment-boundary-value" for="environment-boundary" aria-hidden="true">55.0</output>
+        <button class="reset-button" type="button" data-reset="environment-boundary" aria-label="Reset Environment Boundary Distance">Reset</button>
+        <input id="environment-boundary" type="range" min="55" max="275" step="1" value="55" aria-label="Environment Boundary Distance" data-unit="" title="Ground boundary distance from the cube. 55 is the original and nearest position.">
+      </div>
+    </div>
+  </details>
+  <div class="panel-actions">
+    <button id="toggle-groups" class="reset-button" type="button" aria-label="Collapse All Control Groups" aria-expanded="true" aria-controls="sun-group fog-group tyndall-group light-group environment-group">Collapse All</button>
+    <button id="reset-all" class="reset-button reset-all" type="button" aria-label="Reset All Sliders">Reset All</button>
   </div>
-  <div class="control">
-    <output id="light-value" for="light" aria-hidden="true">48.0%</output>
-    <input id="light" type="range" min="0" max="100" step="0.1" value="48" aria-label="光线强度">
-    <button class="reset-button" type="button" data-reset="light" aria-label="Reset Light Intensity">Reset</button>
-    <label for="light">Light Intensity</label>
-  </div>
-  <div class="control">
-    <output id="fog-value" for="fog" aria-hidden="true">46.0%</output>
-    <input id="fog" type="range" min="0" max="100" step="0.1" value="46" aria-label="雾的浓度">
-    <button class="reset-button" type="button" data-reset="fog" aria-label="Reset Fog Density">Reset</button>
-    <label for="fog">Fog Density</label>
-  </div>
-  <div class="control">
-    <output id="fog-hue-value" for="fog-hue" aria-hidden="true">35.0°</output>
-    <input id="fog-hue" type="range" min="0" max="360" step="0.1" value="35" aria-label="雾的色相" data-unit="°">
-    <button class="reset-button" type="button" data-reset="fog-hue" aria-label="Reset Fog Hue">Reset</button>
-    <label for="fog-hue">Fog Hue</label>
-  </div>
-  <div class="control">
-    <output id="saturation-value" for="saturation" aria-hidden="true">100.0%</output>
-    <input id="saturation" type="range" min="0" max="200" step="0.1" value="100" aria-label="场景滤镜饱和度">
-    <button class="reset-button" type="button" data-reset="saturation" aria-label="Reset Scene Saturation">Reset</button>
-    <label for="saturation">Scene Saturation</label>
-  </div>
-  <div class="control">
-    <output id="brightness-value" for="brightness" aria-hidden="true">100.0%</output>
-    <input id="brightness" type="range" min="0" max="200" step="0.1" value="100" aria-label="场景滤镜亮度">
-    <button class="reset-button" type="button" data-reset="brightness" aria-label="Reset Scene Brightness">Reset</button>
-    <label for="brightness">Scene Brightness</label>
-  </div>
-  <button id="reset-all" class="reset-button reset-all" type="button" aria-label="Reset All Sliders">Reset All</button>
 </div>
 <div id="error" role="alert"></div>
 <script type="module">
@@ -116,14 +222,15 @@ let renderWidth = 0, renderHeight = 0, scheduled = false, stopped = false;
 let outputWidth = 0, outputHeight = 0, resolutionEpoch = 0;
 let resizeNeeded = true, dirty = true, initialized = false, historyValid = false, generation = 0;
 let noiseTexture, noiseSampler, lastRenderTime = 0, cameraMotion = 0;
-const uniforms = new Float32Array(56);
-const previousUniforms = new Float32Array(56);
+let lastInteractionTime = -Infinity;
+const uniforms = new Float32Array(72);
+const previousUniforms = new Float32Array(72);
 const postUniforms = new Float32Array(12);
 const quality = {targetFps:60, minScale:0.5, maxScale:1, scale:0.7, averageMs:0, warmup:8, slow:0, fast:0, lastChange:0, changes:0, awaitingAdjustment:false};
 const gpuTimer = {enabled:false, slots:[]};
 const diagnostics = {backend:'WebGPU', ready:false, frames:0, samples:0, error:null, resolution:[0,0], outputResolution:[0,0], renderScale:1, targetFps:quality.targetFps, milliseconds:0, gpuMilliseconds:0, budgetMilliseconds:0, timingSource:'queue-latency', fps:0, resolutionChanges:0, passes:['Trace','Temporal','Denoise / Tone Map','FXAA 3.11','FSR 1.0 EASU','FSR 1.0 RCAS'], adapterAttempts:[]};
 // A read-only diagnostics handle for testing; it adds no interface elements.
-Object.defineProperty(window,'sceneDiagnostics',{get:()=>({...diagnostics, camera:{...orbit}, controls:inputs.map(i=>Number(i.value)), sunDiscVisible})});
+Object.defineProperty(window,'sceneDiagnostics',{get:()=>({...diagnostics, camera:{...orbit}, controls:inputs.map(i=>Number(i.value)), controlValues:Object.fromEntries(inputs.map(i=>[i.id,Number(i.value)])), sunDiscVisible})});
 
 const shader = /* wgsl */`
 struct Uniforms {
@@ -140,7 +247,11 @@ struct Uniforms {
   previousUp: vec4f,
   jitter: vec4f,       // current pixel offset xy, previous pixel offset zw
   fogColor: vec4f,     // luminance-normalized atmospheric tint, reserved
-  colorGrade: vec4f,   // scene saturation, scene brightness, reserved zw
+  fogSettings: vec4f,  // fog saturation, fog brightness, shaft size, gap coverage
+  lightColor: vec4f,   // direct sunlight RGB
+  skyHorizon: vec4f, // RGB sky tint, W ground boundary distance
+  skyZenith: vec4f,
+  shaftSettings: vec4f, // directional scattering opacity, reserved yzw
 }
 @group(0) @binding(0) var<uniform> u: Uniforms;
 @group(0) @binding(1) var noiseLattice: texture_2d<f32>;
@@ -150,7 +261,6 @@ const FAR = 1000000.0;
 const CENTER = vec3f(0.0, 0.91, 0.0);
 const HALF = vec3f(0.91);
 const BEVEL = 0.048;
-const SUN_COLOR = vec3f(1.0, 0.84, 0.62);
 var<private> rng: u32;
 
 fn random() -> f32 {
@@ -212,24 +322,29 @@ fn cloudLight(p:vec3f, light:vec3f) -> f32 {
   // Trace the sun ray to a high, broken cloud sheet. Its transmission is
   // constant along each sun ray, giving coherent shafts in world space.
   let height=max(14.0-p.y,0.0)/max(light.y,0.07);
-  let q=(p.xz+light.xz*height)*0.17+vec2f(4.1,1.8);
+  if u.fogSettings.w<=0.0 { return 0.0; }
+  let q=(p.xz+light.xz*height)*(0.17/max(u.fogSettings.z,0.2))+vec2f(4.1,1.8);
   let cloud=0.68*noise(q*vec2f(2.4,0.65))+0.32*noise(q*3.7+8.0);
-  return 0.08+0.92*smoothstep(0.43,0.66,cloud);
+  // Density controls the open fraction of the original broken cloud sheet.
+  // At 100% size/density, retain the original irregular shaft profile exactly.
+  let shift=(1.0-u.fogSettings.w)*0.22;
+  return (0.08+0.92*smoothstep(0.43+shift,0.66+shift,cloud))*smoothstep(0.0,0.15,u.fogSettings.w);
 }
 fn environment(rd:vec3f,showDisk:f32) -> vec3f {
-  let horizon=u.fogColor.xyz*0.56;
-  let zenith=vec3f(0.11,0.16,0.21);
+  let horizon=u.skyHorizon.xyz;
+  let zenith=u.skyZenith.xyz;
   // A smooth gradient on both sides of the horizon avoids a visible crease.
   let sky=mix(horizon,zenith,smoothstep(-0.12,0.70,rd.y));
   let mu=max(dot(rd,u.sun.xyz),0.0);
   let halo=pow(mu,16.0)*0.32+pow(mu,180.0)*0.65;
   // Visibility affects the disc only; lighting, shadows and halo stay intact.
   let disk=smoothstep(0.99945,0.99982,mu)*8.0*showDisk*u.atmosphere.w;
-  return sky*(0.22+u.sun.w*0.13)+SUN_COLOR*(halo+disk)*u.sun.w;
+  return sky*(0.22+u.sun.w*0.13)+u.lightColor.xyz*(halo+disk)*u.sun.w;
 }
 fn sunSample() -> vec3f {
   let a=random()*2.0*PI; let r=sqrt(random())*0.012;
-  let tangent=normalize(cross(u.sun.xyz,vec3f(0,1,0)));
+  let axis=select(vec3f(0,1,0),vec3f(1,0,0),abs(u.sun.y)>0.95);
+  let tangent=normalize(cross(u.sun.xyz,axis));
   let bitangent=cross(tangent,u.sun.xyz);
   return normalize(u.sun.xyz+r*(cos(a)*tangent+sin(a)*bitangent));
 }
@@ -246,10 +361,18 @@ fn sandNormal(p:vec3f,t:f32) -> vec3f {
   let fade=1.0-smoothstep(12.0,48.0,t);
   return normalize(vec3f(-gradient.x*fade,1.0,-gradient.y*fade));
 }
+fn shadowStrength() -> f32 {
+  return exp(-8.0*u.atmosphere.x);
+}
+fn fogShadow(visibility:f32) -> f32 {
+  return mix(1.0,visibility,shadowStrength());
+}
 fn sandRadiance(p:vec3f,rd:vec3f,t:f32,light:vec3f,showDisk:f32) -> vec3f {
   // Anchor the clearing to the cube, so zooming never washes out its contact.
   // Blend into the same sky BEFORE volume integration, including reflections.
-  let edgeFade=smoothstep(10.0,55.0,length(p.xz));
+  // Preserve the original 45-unit transition width while moving it outward.
+  let boundary=max(u.skyHorizon.w,55.0);
+  let edgeFade=smoothstep(boundary-45.0,boundary,length(p.xz));
   let background=environment(rd,showDisk);
   if edgeFade>=1.0 { return background; }
   let n=sandNormal(p,t);
@@ -258,12 +381,12 @@ fn sandRadiance(p:vec3f,rd:vec3f,t:f32,light:vec3f,showDisk:f32) -> vec3f {
   let grain=(noise(p.xz*170.0)-0.5)*(1.0-smoothstep(0.003,0.015,pixelFootprint));
   let albedo=mix(vec3f(0.29,0.23,0.16),vec3f(0.52,0.42,0.29),mottling)+grain*0.12;
   let footprint=length(max(abs(p.xz)-vec2f(0.83),vec2f(0)));
-  let ao=1.0-0.55*exp(-footprint*3.7);
-  let diffuse=max(dot(n,light),0.0)*cubeVisibility(p+vec3f(0,0.003,0),light)*cloudLight(p,light);
+  let ao=1.0-0.55*shadowStrength()*exp(-footprint*3.7);
+  let diffuse=max(dot(n,light),0.0)*fogShadow(cubeVisibility(p+vec3f(0,0.003,0),light));
   let ambient=vec3f(0.32,0.35,0.38)*(0.14+u.sun.w*0.075)*ao;
   let h=normalize(light-rd);
   let sparkle=pow(max(dot(n,h),0.0),90.0)*0.055;
-  let sand=albedo*(ambient+SUN_COLOR*u.sun.w*diffuse*0.42)+SUN_COLOR*sparkle*u.sun.w*diffuse;
+  let sand=albedo*(ambient+u.lightColor.xyz*u.sun.w*diffuse*0.42)+u.lightColor.xyz*sparkle*u.sun.w*diffuse;
   return mix(sand,background,edgeFade);
 }
 fn hg(mu:f32,g:f32) -> f32 {
@@ -283,16 +406,18 @@ fn volume(ro:vec3f,rd:vec3f,end:f32,steps:u32,jitter:f32) -> vec4f {
   let phase=hg(dot(rd,u.sun.xyz),0.46);
   let ambient=vec3f(0.33,0.37,0.42)*(0.16+u.sun.w*0.065);
   let sunCoefficient=u.atmosphere.x*0.28/max(u.sun.y,0.15);
-  let sunLight=SUN_COLOR*(u.sun.w*phase*5.0);
+  let sunLight=u.lightColor.xyz*(u.sun.w*phase*5.0*u.shaftSettings.x);
   var transmission=1.0; var light=vec3f(0);
   for(var i=0u;i<steps;i++) {
     let t=(f32(i)+jitter)*stepLength;
     let p=ro+rd*t;
     let extinction=density(p);
     let attenuation=exp(-extinction*stepLength);
-    let visibility=cubeVisibility(p,u.sun.xyz)*cloudLight(p,u.sun.xyz);
+    let visibility=fogShadow(cubeVisibility(p,u.sun.xyz))*cloudLight(p,u.sun.xyz);
     let sunTransmission=exp(-sunCoefficient*max(9.0-p.y,0.0));
-    let scattered=(ambient+sunLight*visibility*sunTransmission)*u.fogColor.xyz;
+    let colored=(ambient+sunLight*visibility*sunTransmission)*u.fogColor.xyz;
+    let luma=dot(colored,vec3f(0.2126,0.7152,0.0722));
+    let scattered=max(mix(vec3f(luma),colored,u.fogSettings.x),vec3f(0))*u.fogSettings.y;
     light+=transmission*(1.0-attenuation)*scattered*0.94;
     transmission*=attenuation;
     if transmission<0.008 { break; }
@@ -349,7 +474,7 @@ fn radiance(ro:vec3f,rd:vec3f) -> TraceOutput {
     let geometryV=nv/(nv*(1.0-0.08)+0.08);
     let geometryL=nl/(nl*(1.0-0.08)+0.08);
     let specular=distribution*geometryV*geometryL/(4.0*nv+0.001);
-    surface=incoming*fresnel + SUN_COLOR*fresnel*min(specular,12.0)*u.sun.w*cloudLight(p,sun)*0.55;
+    surface=incoming*fresnel + u.lightColor.xyz*fresnel*min(specular,12.0)*u.sun.w*0.55;
     surface*=0.99+0.10*(noise(vec2f(p.x+p.z,p.y)*vec2f(5.0,900.0))-0.5)*fineDetail;
   }
   let fog=volume(ro,rd,hit.t,28u,random());
@@ -383,7 +508,11 @@ struct Uniforms {
   previousUp: vec4f,
   jitter: vec4f,
   fogColor: vec4f,
-  colorGrade: vec4f,
+  fogSettings: vec4f,
+  lightColor: vec4f,
+  skyHorizon: vec4f, // RGB sky tint, W ground boundary distance
+  skyZenith: vec4f,
+  shaftSettings: vec4f,
 }
 @group(0) @binding(0) var<uniform> u: Uniforms;
 @group(0) @binding(1) var currentRadiance: texture_2d<f32>;
@@ -409,6 +538,15 @@ fn compatibleGeometry(a: vec4f, b: vec4f, expectedDepth: f32) -> bool {
   let geometry = textureLoad(currentGeometry, pixel, 0);
   if u.atmosphere.y < 0.5 { return vec4f(current, 1.0); }
 
+  // At rest a pixel integrates subpixel coverage, including samples that hit
+  // different materials on a cube silhouette. Rejecting those samples by
+  // their latest jittered normal/depth makes small edges repeatedly sparkle.
+  if u.atmosphere.z < 0.00001 {
+    let prior=textureLoad(previousHistory,pixel,0);
+    let samples=min(max(prior.a,1.0)+1.0,96.0);
+    return vec4f(mix(prior.rgb,current,1.0/samples),samples);
+  }
+
   // The G-buffer stores forward depth, not ray length. Include both frames'
   // subpixel offsets so static accumulation remains registered to the surface.
   let xy = (2.0 * (frag.xy + u.jitter.xy) - u.screen.xy) / u.screen.y;
@@ -423,9 +561,6 @@ fn compatibleGeometry(a: vec4f, b: vec4f, expectedDepth: f32) -> bool {
   let previousXY = vec2f(dot(previousVector, u.previousRight.xyz), -dot(previousVector, u.previousUp.xyz))
     / (projectedDepth * max(u.previousEye.w, 0.00001));
   var previousPixel = (previousXY * u.screen.y + u.screen.xy) * 0.5 - u.jitter.zw;
-  // At rest, accumulate different subpixel samples of this same pixel directly.
-  // Repeated bilinear reprojection of a stationary image would soften detail.
-  if u.atmosphere.z < 0.00001 { previousPixel = frag.xy; }
   if any(previousPixel < vec2f(0.5)) || any(previousPixel > u.screen.xy - vec2f(0.5)) {
     return vec4f(current, 1.0);
   }
@@ -503,7 +638,11 @@ struct Uniforms {
   previousUp: vec4f,
   jitter: vec4f,
   fogColor: vec4f,
-  colorGrade: vec4f,
+  fogSettings: vec4f,
+  lightColor: vec4f,
+  skyHorizon: vec4f, // RGB sky tint, W ground boundary distance
+  skyZenith: vec4f,
+  shaftSettings: vec4f,
 }
 @group(0) @binding(0) var<uniform> u: Uniforms;
 @group(0) @binding(1) var resolvedHistory: texture_2d<f32>;
@@ -552,7 +691,10 @@ fn aces(x: vec3f) -> vec3f {
   }
   // Newly revealed pixels get a stronger spatial cleanup. Converged surfaces
   // keep their brushed-metal and sand detail instead of retaining a blur.
-  let strength = clamp(0.95 / sqrt(historyLength), 0.06, 0.88);
+  let baseStrength = clamp(0.95 / sqrt(historyLength), 0.06, 0.88);
+  // Once stationary coverage has converged, stop letting the newest jittered
+  // material ID change the bilateral neighborhood around a tiny silhouette.
+  let strength = baseStrength * select(1.0,1.0-smoothstep(8.0,32.0,historyLength),u.atmosphere.z<0.00001);
   var c = mix(center.rgb, filtered / max(weights, 0.00001), strength);
   let uv = p.xy / u.screen.xy;
   let bloomStep = vec2f(12.0) / u.screen.xy;
@@ -567,9 +709,6 @@ fn aces(x: vec3f) -> vec3f {
   c *= 1.0 - 0.15 * dot(vignette, vignette);
   c = aces(c * 1.12);
   c = pow(c, vec3f(1.0 / 2.2));
-  // Grade the complete displayed scene, leaving controls and FPS readable.
-  c = mix(vec3f(luminance(c)), c, u.colorGrade.x);
-  c = max(c, vec3f(0.0)) * u.colorGrade.y;
   return vec4f(clamp(c, vec3f(0.0), vec3f(1.0)), 1.0);
 }
 `;
@@ -845,18 +984,19 @@ function fail(error) {
 function scheduleRender() {
   if(!scheduled&&!stopped&&initialized&&!document.hidden) {scheduled=true;requestAnimationFrame(render);}
 }
-function invalidate(resetHistory=false) {
+function invalidate(resetHistory=false,interaction=true) {
+  if(interaction)lastInteractionTime=performance.now();
   if(resetHistory)dirty=true;
   frame=0;
   scheduleRender();
 }
 function updateSlider(input) {
   const value=Number(input.value);
-  const displayValue=`${value.toFixed(1)}${input.dataset.unit||'%'}`;
+  const displayValue=`${value.toFixed(1)}${input.dataset.unit??'%'}`;
   const fill=(value-Number(input.min))/(Number(input.max)-Number(input.min))*100;
   input.style.setProperty('--fill',`${clamp(fill,0,100)}%`);
   document.getElementById(`${input.id}-value`).value=displayValue;
-  input.setAttribute('aria-valuetext',input.id==='sun'?`${displayValue} 太阳轨道`:displayValue);
+  input.setAttribute('aria-valuetext',displayValue);
 }
 for(const input of inputs) {
   updateSlider(input);
@@ -873,6 +1013,22 @@ for(const button of document.querySelectorAll('[data-reset]')) {
   button.addEventListener('click',()=>resetSliders([controls[button.dataset.reset]]));
 }
 document.querySelector('#reset-all').addEventListener('click',()=>resetSliders(inputs));
+const groups = [...document.querySelectorAll('.control-group')];
+const toggleGroupsButton = document.querySelector('#toggle-groups');
+function syncGroupToggle() {
+  const anyOpen = groups.some(group => group.open);
+  toggleGroupsButton.textContent = anyOpen ? 'Collapse All' : 'Expand All';
+  toggleGroupsButton.setAttribute('aria-label', anyOpen ? 'Collapse All Control Groups' : 'Expand All Control Groups');
+  toggleGroupsButton.setAttribute('aria-expanded', String(anyOpen));
+}
+toggleGroupsButton.addEventListener('click', () => {
+  const open = !groups.some(group => group.open);
+  for (const group of groups) group.open = open;
+  syncGroupToggle();
+});
+for (const group of groups) group.addEventListener('toggle', syncGroupToggle);
+syncGroupToggle();
+
 sunDiscToggle.addEventListener('click',()=>{
   sunDiscVisible=!sunDiscVisible;
   sunDiscToggle.setAttribute('aria-pressed',String(sunDiscVisible));
@@ -1015,6 +1171,13 @@ function updateResolutionBudget(milliseconds,epoch,source) {
   if(stopped||document.hidden||epoch!==resolutionEpoch||resizeNeeded||!Number.isFinite(milliseconds)||milliseconds<=0)return;
   diagnostics.timingSource=source;
   if(source==='gpu-timestamp')diagnostics.gpuMilliseconds=milliseconds;
+  // Freeze the sampling grid after manipulation; asynchronous GPU timings
+  // must not keep clearing a stationary silhouette's accumulated coverage.
+  const interactive=cameraMotion>0.00001||pointers.size>0||performance.now()-lastInteractionTime<180;
+  if(!interactive) {
+    quality.awaitingAdjustment=false;quality.slow=0;quality.fast=0;
+    return;
+  }
   if(quality.warmup>0){quality.warmup--;return;}
   quality.averageMs=quality.averageMs?quality.averageMs*0.88+milliseconds*0.12:milliseconds;
   diagnostics.budgetMilliseconds=quality.averageMs;
@@ -1030,13 +1193,12 @@ function updateResolutionBudget(milliseconds,epoch,source) {
   next=clamp(next,quality.minScale,quality.maxScale);
   quality.awaitingAdjustment=Math.abs(next-quality.scale)>=0.001;
   if(!quality.awaitingAdjustment)return;
-  // A fast/high-refresh display may finish 96 samples before the cooldown.
-  // Finish the pending quality assessment before entering static-image sleep.
-  if(now-quality.lastChange<900){scheduleRender();return;}
+  // Input and camera motion supply frames; a pending quality assessment alone
+  // must not keep a converged image running.
+  if(now-quality.lastChange<900)return;
   quality.scale=next;quality.changes++;quality.lastChange=now;
   resizeNeeded=true;
-  // The asynchronous timing callback can arrive after the last convergence frame.
-  invalidate();
+  invalidate(false,false);
 }
 function createGpuTimer() {
   if(!device.features.has('timestamp-query'))return;
@@ -1077,6 +1239,24 @@ function fogTint(degrees) {
   const luma=rgb[0]*0.2126+rgb[1]*0.7152+rgb[2]*0.0722;
   return rgb.map(channel=>channel/luma);
 }
+// Rotate hue without changing luminance; saturation and exposure stay separate.
+function gradeColor(rgb,hueOffset,saturation,brightness) {
+  const maximum=Math.max(...rgb),minimum=Math.min(...rgb),chroma=maximum-minimum;
+  let hue=0;
+  if(chroma>1e-8) {
+    if(maximum===rgb[0])hue=(rgb[1]-rgb[2])/chroma;
+    else if(maximum===rgb[1])hue=2+(rgb[2]-rgb[0])/chroma;
+    else hue=4+(rgb[0]-rgb[1])/chroma;
+  }
+  hue=((hue+hueOffset/60)%6+6)%6;
+  const shifted=[5,3,1].map(offset=>{
+    const k=(offset+hue)%6;
+    return maximum-chroma*Math.max(0,Math.min(k,4-k,1));
+  });
+  const luminance=c=>c[0]*0.2126+c[1]*0.7152+c[2]*0.0722;
+  const luma=luminance(rgb),scale=luma/Math.max(luminance(shifted),1e-8);
+  return shifted.map(c=>Math.max(0,luma+(c*scale-luma)*saturation)*brightness);
+}
 function setUniforms() {
   const s=Math.sin(orbit.yaw),c=Math.cos(orbit.yaw),sp=Math.sin(orbit.pitch),cp=Math.cos(orbit.pitch);
   const focusY=0.88;
@@ -1085,18 +1265,24 @@ function setUniforms() {
   uniforms.set([-s*cp,-sp,-c*cp,0],8);
   uniforms.set([c,0,-s,0],12);
   uniforms.set([-s*sp,cp,-c*sp,0],16);
-  const time=Number(controls.sun.value)/100;
-  const azimuth=-2.8+time*5.6;
-  const elevation=0.10+Math.sin(time*Math.PI)*0.63;
-  const intensity=Number(controls.light.value)/100;
-  uniforms.set([Math.sin(azimuth)*Math.cos(elevation),Math.sin(elevation),-Math.cos(azimuth)*Math.cos(elevation),intensity*6.0],20);
+  let sun=['sun-x','sun-y','sun-z'].map(id=>Number(controls[id].value));
+  let sunLength=Math.hypot(...sun);
+  if(sunLength<1e-6) { sun=[58.8,61.4,-52.7]; sunLength=Math.hypot(...sun); }
+  const intensity=Number(controls['light-brightness'].value)/100;
+  const horizon=clamp((sun[1]/sunLength+0.04)/0.08,0,1);
+  uniforms.set([...sun.map(v=>v/sunLength),intensity*2.88*horizon*horizon*(3-2*horizon)],20);
   const fog=Number(controls.fog.value)/100;
   uniforms.set([fog*fog*0.30,historyValid&&!dirty?1:0,cameraMotion,Number(sunDiscVisible)],24);
   uniforms.set(previousUniforms.subarray(4,20),28);
   const sequence=totalFrames%32+1;
   uniforms.set([halton(sequence,2)-0.5,halton(sequence,3)-0.5,previousUniforms[44],previousUniforms[45]],44);
   uniforms.set([...fogTint(Number(controls['fog-hue'].value)),0],48);
-  uniforms.set([Number(controls.saturation.value)/100,Number(controls.brightness.value)/100,0,0],52);
+  uniforms.set([Number(controls['fog-saturation'].value)/100,Number(controls['fog-brightness'].value)/100,Number(controls['shaft-size'].value)/100,Number(controls['shaft-density'].value)/100],52);
+  uniforms.set([...gradeColor([1,0.84,0.62],Number(controls['light-hue'].value)-34.7,Number(controls['light-saturation'].value)/100,1),0],56);
+  const skyHue=Number(controls['environment-hue'].value),skySaturation=Number(controls['environment-saturation'].value)/100,skyBrightness=Number(controls['environment-brightness'].value)/100;
+  uniforms.set([...gradeColor(fogTint(35).map(v=>v*0.56),skyHue,skySaturation,skyBrightness),Number(controls['environment-boundary'].value)],60);
+  uniforms.set([...gradeColor([0.11,0.16,0.21],skyHue,skySaturation,skyBrightness),0],64);
+  uniforms.set([Number(controls['shaft-opacity'].value)/100,0,0,0],68);
   device.queue.writeBuffer(uniformBuffer,0,uniforms);
 }
 function render(now) {
@@ -1111,6 +1297,7 @@ function render(now) {
     const dt=clamp((now-lastRenderTime)/1000,1/240,0.05);
     lastRenderTime=now;
     let moving=false;
+    const wasMoving=cameraMotion>0.00001;
     cameraMotion=0;
     for(const key of ['yaw','pitch','radius']) {
       const delta=target[key]-orbit[key];
@@ -1122,6 +1309,9 @@ function render(now) {
       else orbit[key]=target[key];
     }
     cameraMotion=Math.min(cameraMotion,1);
+    // Start a clean stationary coverage integral, without retaining the final
+    // moving frame's reprojected silhouette or reflection history.
+    if(wasMoving&&!moving){dirty=true;historyValid=false;}
     if(dirty||moving)frame=0;
     setUniforms();
     const encoder=device.createCommandEncoder();
@@ -1166,8 +1356,10 @@ function render(now) {
       canvas.dataset.ready='true';canvas.dataset.samples=String(submittedSamples);
       canvas.dataset.frames=String(completedFrames);canvas.dataset.frameMilliseconds=diagnostics.milliseconds.toFixed(1);
       canvas.dataset.camera=submittedCamera;canvas.dataset.motion=submittedMotion.toFixed(4);
+      canvas.dataset.renderScale=diagnostics.renderScale.toFixed(4);
+      canvas.dataset.resolutionChanges=String(quality.changes);
     }).catch(fail);
-    if(frame<96||moving||quality.awaitingAdjustment)scheduleRender();
+    if(frame<96||moving)scheduleRender();
   } catch(error) {fail(error);}
 }
 async function requestSceneDevice(gpu) {
